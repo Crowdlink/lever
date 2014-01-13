@@ -1,33 +1,60 @@
 from flask.views import MethodView
-from flask.ext.login import current_user
 from flask import jsonify, current_app, request
 
 import json
 import sqlalchemy
 import sys
+import calendar
+import datetime
 
-
-class APISyntaxError(Exception):
-    pass
-
-class APINotFound(Exception):
-    pass
 
 class LeverException(Exception):
-    """ Lever handles many common errors that occur in the API and
-    raises this exception with recommended return information.
-    An attribute 'code' carries an http return code, end_user carries a
-    dictionary of information that could be helpful to return to the user.
-    End user dictionary will always include a key message, which will mirror
-    the message text of the exception, but can contain more information
-    when applicable information is available. The original stack trace will
-    always be passed back on the Exception. """
-    def __init__(self, code, message, end_user=None):
-        self.code = code
+    """ Lever handles many common errors that occur in the API and raises this
+    exception with recommended return information.
+
+    An attribute 'code' carries an http return code.
+
+    End_user carries a dictionary of information that could be helpful to
+    return to the user. End user dictionary will always include a key message,
+which will mirror the message text of the exception, but can contain more
+information when applicable information is available. The original stack trace
+will always be passed back on the Exception.
+
+    In addition to the end_user dictionary, there is an extra dictionary which
+    will contain potentially helpful debugging information, but may be unsafe
+    to return to the User.
+
+    These exceptions can be raised by your custom PATCH methods and will be
+    handled as expected. Anything raised by custom methods that isn't a
+    KeyError, AttributeError, or child of LeverException will cause a 500.  """
+    code = 500
+
+    def __init__(self, message, code=None, end_user=None, extra=None):
+        if code is not None:
+            self.code = code
         self.message = message
         if end_user is None:
-            end_user = {}
-        self.end_user = {'message': message}
+            self.end_user = {}
+        else:
+            self.end_user = end_user
+        if extra is None:
+            self.extra = {}
+        else:
+            self.extra = extra
+        self.end_user.update({'message': message})
+
+
+class LeverSyntaxError(LeverException):
+    code = 400
+
+
+class LeverNotFound(LeverException):
+    code = 404
+    pass
+
+
+class LeverServerError(LeverException):
+    code = 500
 
 
 OPERATORS = {
@@ -72,6 +99,7 @@ class API(MethodView):
     create_method = 'create'
     params = ''
     session = None
+    current_user = None
 
     @property
     def pkey(self):
@@ -90,40 +118,51 @@ class API(MethodView):
             meth = getattr(self, 'get', None)
         assert meth is not None, 'Unimplemented method %r' % request.method
 
+        extra = {}
+        end_user = {}
+        code = None
         try:
             return meth(*args, **kwargs)
 
         # Common API errors
         except KeyError as e:
-            ret = (400,
-                   'Incorrect syntax or missing key ' + str(e.message),
-                   {'key': e.message})
+            msg = 'Incorrect syntax or missing key ' + str(e.message)
+            code = 400
+            extra = {'key': e.message}
         except AttributeError:
-            ret = 400, 'Incorrect syntax or missing key'
+            msg = 'Incorrect syntax or missing key'
+            code = 400
         except AssertionError:
-            ret = 403, "You don't have permission to do that"
-        except APISyntaxError as e:
-            ret = 400, e.message
-        except APINotFound as e:
-            ret = 404, e.message
+            msg = "You don't have permission to do that"
+            code = 403
 
         # SQLAlchemy exceptions
         except sqlalchemy.orm.exc.NoResultFound:
-            ret = 404, 'Could not be found'
+            msg = 'Object could not be found'
+            code = 404
         except sqlalchemy.orm.exc.MultipleResultsFound:
-            ret = 400, 'Only one result requested, but MultipleResultsFound'
+            msg = 'Only one result requested, but MultipleResultsFound'
+            code = 400
         except sqlalchemy.exc.IntegrityError:
-            ret = 409, "A duplicate value already exists in the database"
+            msg = "A duplicate value already exists in the database"
+            code = 409
         except sqlalchemy.exc.InvalidRequestError:
-            ret = 400, "Client programming error, likely invalid search sytax used."
+            msg = "Client programming error, likely invalid search sytax used."
+            code = 400
         except sqlalchemy.exc.DataError:
-            ret = 400, "ORM returned invalid data for an argument"
+            msg = "ORM returned invalid data for an argument"
+            code = 400
         except sqlalchemy.exc.SQLAlchemyError:
-            ret = 402, "An unknown database operations error has occurred"
+            msg = "An unknown database operations error has occurred"
+            code = 402
         except:
             raise
 
-        raise LeverException, ret, sys.exc_info()[2]
+        info = sys.exc_info()
+        extra['original_exc'] = info[1].message
+        # get our exception info and try to extract extra information out of it
+        exc = LeverException(msg, code=code, extra=extra, end_user=end_user)
+        raise LeverException, exc, info[2]
 
 
     def get_obj(self):
@@ -162,7 +201,7 @@ class API(MethodView):
         """ Create a new object """
         self.params = request.get_json(silent=True)
         if not self.params:
-            raise APISyntaxError("To create, values must be specified")
+            raise LeverSyntaxError("To create, values must be specified")
         # check to ensure the user can create for others if requested
         username = self.params.pop('__username', None)
         userid = self.params.pop('__user_id', None)
@@ -176,7 +215,7 @@ class API(MethodView):
             self.create_hook()
             assert self.can_cls('class_create_other', params=self.params), "Cant create for other users"
         else:
-            self.params['user'] = current_user.get()
+            self.params['user'] = self.current_user.get()
             self.create_hook()
             assert self.can_cls('class_create'), "Cant create that object"
 
@@ -185,7 +224,7 @@ class API(MethodView):
         except TypeError as e:
             if 'argument' in e.message:
                 msg = "Wrong number of arguments supplied for create."
-                raise APISyntaxError, msg, sys.exc_info()[2]
+                raise LeverSyntaxError, msg, sys.exc_info()[2]
             else:
                 raise
 
@@ -199,14 +238,14 @@ class API(MethodView):
         """ Used to execute methods on an object """
         self.params = request.get_json(silent=True)
         if not self.params:
-            raise APISyntaxError("To run an action, values must be specified")
+            raise LeverSyntaxError("To run an action, values must be specified")
 
         action = self.params.pop('__action')
         cls = self.params.pop('__cls', None)
         if cls is None:
             obj = self.get_obj()
             if not obj:
-                raise APINotFound("Could not find any object to perform an action on")
+                raise LeverNotFound("Could not find any object to perform an action on")
             assert obj.can('action_' + action), "Cant perform action " + action
         else:
             assert self.can_cls('action_' + action), "Can't perform cls action " + action
@@ -219,7 +258,7 @@ class API(MethodView):
             if 'argument' in e.message:
                 msg = ("Wrong number of arguments supplied for action {}."
                        .format(action))
-                raise APISyntaxError, msg, sys.exc_info()[2]
+                raise LeverSyntaxError, msg, sys.exc_info()[2]
             else:
                 raise
 
@@ -233,7 +272,17 @@ class API(MethodView):
 
         self.session.commit()
 
-        return jsonify(**retval)
+        try:
+            return jsonify(**retval)
+        except (LeverException, KeyError, AttributeError):
+            raise
+        except Exception as e:
+            if 'not JSON serializable' in e.message:
+                raise LeverServerError(
+                    "Response was not JSON serializable, patch method returned"
+                    " invalid data.",
+                    extra={'retval': str(retval)},
+                    end_user={'method': action})
 
     def create_hook(self):
         """ Does logic required for checking permissions on a create action """
@@ -243,10 +292,10 @@ class API(MethodView):
         """ Updates an objects values """
         self.params = request.get_json(silent=True)
         if not self.params:
-            raise APISyntaxError("To update, values must be specified")
+            raise LeverSyntaxError("To update, values must be specified")
         obj = self.get_obj()
         if not obj:
-            raise APINotFound("Could not find any object to update")
+            raise LeverNotFound("Could not find any object to update")
 
         # updates all fields if data is provided, checks acl
         for key, val in self.params.iteritems():
@@ -263,11 +312,11 @@ class API(MethodView):
     def delete(self):
         self.params = request.get_json(silent=True)
         if not self.params:
-            raise APISyntaxError("To delete, values must be specified")
+            raise LeverSyntaxError("To delete, values must be specified")
 
         obj = self.get_obj()
         if not obj:
-            raise APINotFound("Could not find any object to delete")
+            raise LeverNotFound("Could not find any object to delete")
         assert obj.can('delete'), "Can't delete that object"
         self.session.delete(obj)
         self.session.commit()
@@ -311,22 +360,22 @@ class API(MethodView):
                         args.append(getattr(self.model, op['field']))
                     operator = OPERATORS.get(op['op'])
                     if operator is None:
-                        raise APISyntaxError("Invalid operator specified in filter arguments")
+                        raise LeverSyntaxError("Invalid operator specified in filter arguments")
                     func = operator(*args)
                     query = query.filter(func)
         except AttributeError:
             current_app.logger.debug("Attribute filter error", exc_info=True)
-            raise APISyntaxError(
+            raise LeverSyntaxError(
                 'Filter operator "{}" accessed invalid field'
                 .format(op))
         except KeyError:
             current_app.logger.debug("Key filter error", exc_info=True)
-            raise APISyntaxError(
+            raise LeverSyntaxError(
                 'Filter operator "{}" was missing required arguments'
                 .format(op))
         except TypeError:
             current_app.logger.debug("Argument count error", exc_info=True)
-            raise APISyntaxError(
+            raise LeverSyntaxError(
                 'Incorrect argument count for requested filter operation'
                 .format(op))
 
@@ -343,7 +392,7 @@ class API(MethodView):
                         base = getattr(self.model, key)
                     query = query.order_by(base)
         except AttributeError:
-            raise APISyntaxError(
+            raise LeverSyntaxError(
                 'Order_by operator "{}" accessed invalid field'
                 .format(key))
 
@@ -356,7 +405,7 @@ class API(MethodView):
                 try:
                     query = query.filter_by(**{key: value})
                 except AttributeError:
-                    raise APISyntaxError(
+                    raise LeverSyntaxError(
                         'Filter_by key "{}" accessed invalid field'
                         .format(key))
 
@@ -369,6 +418,7 @@ class API(MethodView):
         mod.add_url_rule(url,
                          view_func=symfunc,
                          methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
+
 
 def get_joined(obj, join_prof="standard_join"):
     # If it's a list, join each of the items in the list and return
@@ -404,7 +454,7 @@ def get_joined(obj, join_prof="standard_join"):
     except ValueError:
         include_base = True
     # run the primary object join
-    join_vals = obj.jsonize(join_keys, raw=True)
+    join_vals = jsonize(obj, join_keys, raw=True)
     # catch our special config key
     if include_base:
         dct = obj.to_dict()
@@ -436,6 +486,46 @@ def safe_json(json_string):
     try:
         return json.loads(json_string)
     except Exception as e:
-        raise APISyntaxError(
+        raise LeverSyntaxError(
             "Error decoding JSON parameters. Original exception was {}"
             .format(e.message))
+
+
+def jsonize(obj, args, raw=False):
+    """ Used to join attributes or functions to an objects json
+    representation.  For passing back object state via the api """
+    dct = {}
+    for key in args:
+        attr = getattr(obj, key)
+        # if it's a callable function call it, then do the parsing below
+        if callable(attr):
+            try:
+                attr = attr()
+            except TypeError:
+                current_app.logger.warn(
+                    "{} callable requires argument on obj {}"
+                    .format(str(attr), obj.__class__.__name__))
+                continue
+        # convert datetime to seconds since epoch, much more universal
+        if isinstance(attr, datetime.datetime):
+            attr = calendar.timegm(attr.utctimetuple()) * 1000
+        # don't convert these common types to strings
+        elif (isinstance(attr, bool) or
+              isinstance(attr, int) or
+              isinstance(attr, dict) or
+              attr is None or
+              isinstance(attr, list)):
+            pass
+        # convert set to a dictionary for easy conditionals
+        elif isinstance(attr, set):
+            print "dfsglkjsdfglkjsdfgljksdfglkjsdfgljksdfglj\n\n\n\n"
+            attr = {x: True for x in attr}
+        else:  # if we don't know what it is, stringify it
+            attr = str(attr)
+
+        dct[key] = attr
+
+    if raw:
+        return dct
+    else:
+        return json.dumps(dct)
