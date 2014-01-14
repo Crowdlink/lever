@@ -11,22 +11,15 @@ files
 import datetime
 import sqlalchemy
 
-from flask import Flask
+from flask import Flask, jsonify
 from flask.ext.sqlalchemy import (_BoundDeclarativeMeta, SQLAlchemy,
                                   _QueryProperty)
 from flask.ext.login import LoginManager, current_user, login_user
 from sqlalchemy import (Column, create_engine, DateTime, Date, Float,
                         ForeignKey, Integer, Boolean, Unicode)
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import backref
-from sqlalchemy.orm import relationship
-from sqlalchemy.orm import scoped_session
-from sqlalchemy.orm import sessionmaker
 
-from crowdlink.model_lib import BaseMapper
-from crowdlink.api_base import API, AnonymousUser
-from crowdlink.api import api_error_handler
-from crowdlink import db
+from lever import API, LeverException, BaseMapper
 
 
 class FlaskTestBase(object):
@@ -49,7 +42,6 @@ class FlaskTestBase(object):
         self.flaskapp = app
         # add the login manager
         self.lm = LoginManager(self.flaskapp)
-        self.lm.anonymous_user = AnonymousUser
         # sqlalchemy flask
         self.db = SQLAlchemy(self.flaskapp)
         self.base = declarative_base(cls=BaseMapper,
@@ -141,6 +133,25 @@ class TestModels(FlaskTestBase):
                 self.db.session.add(inst)
                 return inst
 
+        # Setup the anonymous user to register a single role
+        class AnonymousUser(object):
+            id = -100
+            gh_token = None
+            tw_token = None
+            go_token = None
+
+            def is_anonymous(self):
+                return True
+
+            def global_roles(self):
+                return ['anonymous']
+
+            def is_authenticated(self):
+                return False
+
+            def get(self):
+                return self
+        self.lm.anonymous_user = AnonymousUser
 
         # setup login manager stuff
         @self.lm.user_loader
@@ -153,13 +164,21 @@ class TestModels(FlaskTestBase):
         class UserAPI(API):
             model = User
             session = self.db.session
+            current_user = current_user
 
         self.flaskapp.add_url_rule('/api/user',
                                    view_func=UserAPI.as_view('user'))
-        self.flaskapp.register_error_handler(Exception, api_error_handler)
-
         self.User = User
         self.UserAPI = UserAPI
+
+        # Add an error handler that returns straight LeverException
+        # recommendations
+        @self.flaskapp.errorhandler(LeverException)
+        def handler(exc):
+            self.flaskapp.logger.debug("Extra: {}\nEnd User: {}"
+                                       .format(exc.extra, exc.end_user),
+                                       exc_info=True)
+            return jsonify(**exc.end_user), exc.code
 
         # create all the tables required for the models
         self.db.create_all()

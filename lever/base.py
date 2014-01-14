@@ -29,7 +29,8 @@ will always be passed back on the Exception.
     KeyError, AttributeError, or child of LeverException will cause a 500.  """
     code = 500
 
-    def __init__(self, message, code=None, end_user=None, extra=None):
+    def __init__(self, message, code=None, end_user=None, extra=None, params=None):
+        Exception.__init__(self, message)
         if code is not None:
             self.code = code
         self.message = message
@@ -41,6 +42,8 @@ will always be passed back on the Exception.
             self.extra = {}
         else:
             self.extra = extra
+        if params is not None:
+            self.extra['params'] = params
         self.end_user.update({'message': message})
 
 
@@ -97,7 +100,7 @@ class API(MethodView):
     max_pg_size = 100
     pkey_val = 'id'
     create_method = 'create'
-    params = ''
+    params = {}
     session = None
     current_user = None
 
@@ -119,7 +122,7 @@ class API(MethodView):
         assert meth is not None, 'Unimplemented method %r' % request.method
 
         extra = {}
-        end_user = {}
+        end_user = {'success': False}
         code = None
         try:
             return meth(*args, **kwargs)
@@ -135,6 +138,11 @@ class API(MethodView):
         except AssertionError:
             msg = "You don't have permission to do that"
             code = 403
+        except LeverException as e:
+            # set some default params for manually raised exceptions
+            if 'success' not in e.end_user:
+                e.end_user['success'] = False
+            raise e
 
         # SQLAlchemy exceptions
         except sqlalchemy.orm.exc.NoResultFound:
@@ -161,7 +169,8 @@ class API(MethodView):
         info = sys.exc_info()
         extra['original_exc'] = info[1].message
         # get our exception info and try to extract extra information out of it
-        exc = LeverException(msg, code=code, extra=extra, end_user=end_user)
+        exc = LeverException(msg, code=code, extra=extra, end_user=end_user,
+                             params=self.params)
         raise LeverException, exc, info[2]
 
 
@@ -180,7 +189,7 @@ class API(MethodView):
     def get(self):
         """ Retrieve an object from the database """
         # convert args to a real dictionary that can be popped
-        self.params = {one: two for one, two in request.args.iteritems()}
+        self.params = dict((one, two) for one, two in request.args.iteritems())
         join = self.params.pop('join_prof', 'standard_join')
         obj = self.get_obj()
         if obj:  # if a int primary key is passed
@@ -457,7 +466,10 @@ def get_joined(obj, join_prof="standard_join"):
     join_vals = jsonize(obj, join_keys, raw=True)
     # catch our special config key
     if include_base:
-        dct = obj.to_dict()
+        # first we get the names of all the columns on your model
+        columns = [c.key for c in sqlalchemy.orm.class_mapper(obj.__class__).columns]
+        # then we return their values in a dict
+        dct = dict((c, getattr(obj, c)) for c in columns)
         # Remove keys from the bson that the join prefixes with a -
         for key in remove:
             dct.pop(key, None)
@@ -518,8 +530,7 @@ def jsonize(obj, args, raw=False):
             pass
         # convert set to a dictionary for easy conditionals
         elif isinstance(attr, set):
-            print "dfsglkjsdfglkjsdfgljksdfglkjsdfgljksdfglj\n\n\n\n"
-            attr = {x: True for x in attr}
+            attr = dict((x, True) for x in attr)
         else:  # if we don't know what it is, stringify it
             attr = str(attr)
 

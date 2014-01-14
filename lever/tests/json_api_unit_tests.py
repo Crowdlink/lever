@@ -1,7 +1,6 @@
-import crowdlink
 import json
 
-from crowdlink.tests.model_helpers import TestModelsPrefilled
+from lever.tests.model_helpers import TestModelsPrefilled
 
 from pprint import pprint
 
@@ -63,7 +62,7 @@ class TestBasic(TestModelsPrefilled):
     #########################################################################
     def test_get_user(self, username="mary"):
         d = self.get('/api/user', 200,
-                              {'__filter_by': {'username': username}})
+                     {'__filter_by': {'username': username}})
         assert len(d['objects']) > 0
         assert d['objects'][0]['username'] == username
         return d
@@ -89,25 +88,30 @@ class TestBasic(TestModelsPrefilled):
 
     def test_query_filter(self):
         ret = self.get('/api/user', 200,
-                 params={'__filter': [{'val': True, 'name': 'admin', 'op': 'eq'}]})
+                       params={'__filter': [
+                           {'val': True, 'name': 'admin', 'op': 'eq'}]})
         assert ret['objects'][0]['username'] == 'admin'
 
     def test_query_filter_field(self):
         ret = self.get('/api/user', 200,
-                 params={'__filter': [{'field': 'created_at', 'name': 'admin', 'op': 'eq'}]})
+                       params={'__filter': [
+                           {'field': 'created_at', 'name': 'admin', 'op': 'eq'}]})
         assert len(ret['objects']) == 0
 
     def test_query_bad_param_filter(self):
         self.get('/api/user', 400,
-                 params={'__filter': [{'val': True, 'name': 'dsflgjsdflgk', 'op': 'eq'}]})
+                 params={'__filter': [
+                     {'val': True, 'name': 'dsflgjsdflgk', 'op': 'eq'}]})
 
     def test_query_bad_param_op(self):
         self.get('/api/user', 400,
-                 params={'__filter': [{'val': True, 'name': 'dsflgjsdflgk', 'op': 'fake'}]})
+                 params={'__filter': [
+                     {'val': True, 'name': 'dsflgjsdflgk', 'op': 'fake'}]})
 
     def test_query_missing_param(self):
         self.get('/api/user', 400,
-                 params={'__filter': [{'val': True, 'name': 'username', 'op2': 'fake'}]})
+                 params={'__filter': [
+                     {'val': True, 'name': 'username', 'op2': 'fake'}]})
 
     def test_query_bad_param_count(self):
         self.get('/api/user', 400,

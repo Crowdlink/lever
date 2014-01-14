@@ -1,0 +1,5 @@
+Flask-Login
+Flask-SQLAlchemy
+nose
+nose-progressive
+coverage
