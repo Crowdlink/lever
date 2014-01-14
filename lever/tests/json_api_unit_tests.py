@@ -1,8 +1,22 @@
 import json
 
-from lever.tests.model_helpers import TestModelsPrefilled
+from lever.tests.model_helpers import TestModelsPrefilled, FlaskTestBase
+from lever import API
 
 from pprint import pprint
+
+
+class TestCreateAPI(FlaskTestBase):
+    def test_create_bad_pkey(self):
+        class Testing(self.base):
+            bad_id = self.db.Column(self.db.Integer, primary_key=True)
+
+        class UserAPI(API):
+            model = Testing
+            session = self.db.session
+
+        t = UserAPI()
+        self.assertRaises(AttributeError, lambda: t.pkey)
 
 
 class TestBasic(TestModelsPrefilled):
@@ -93,6 +107,7 @@ class TestBasic(TestModelsPrefilled):
         assert ret['objects'][0]['username'] == 'admin'
 
     def test_query_filter_field(self):
+        # TODO: Write a positive test for this
         ret = self.get('/api/user', 200,
                        params={'__filter': [
                            {'field': 'created_at', 'name': 'admin', 'op': 'eq'}]})
@@ -106,7 +121,7 @@ class TestBasic(TestModelsPrefilled):
     def test_query_bad_param_op(self):
         self.get('/api/user', 400,
                  params={'__filter': [
-                     {'val': True, 'name': 'dsflgjsdflgk', 'op': 'fake'}]})
+                     {'val': True, 'name': 'username', 'op': 'fake'}]})
 
     def test_query_missing_param(self):
         self.get('/api/user', 400,
@@ -202,6 +217,11 @@ class TestBasic(TestModelsPrefilled):
     def test_cant_find_put_delete(self):
         for method in ['put', 'delete']:
             p = {'id': 342095823405982345}
+            getattr(self, method)('/api/user', 404, params=p)
+
+    def test_cant_find_put_delete_wrong_key(self):
+        for method in ['put', 'delete']:
+            p = {'tid': 342095823405982345}
             getattr(self, method)('/api/user', 404, params=p)
 
     # Negative Tests

@@ -10,6 +10,7 @@ files
 """
 import datetime
 import sqlalchemy
+import unittest
 
 from flask import Flask, jsonify
 from flask.ext.sqlalchemy import (_BoundDeclarativeMeta, SQLAlchemy,
@@ -22,7 +23,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from lever import API, LeverException, BaseMapper
 
 
-class FlaskTestBase(object):
+class FlaskTestBase(unittest.TestCase):
     """Base class for tests which use a Flask application.
 
     The Flask test client can be accessed at ``self.app``. The Flask

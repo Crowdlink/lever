@@ -174,6 +174,7 @@ class API(MethodView):
             raise
 
         extra['original_exc'] = str(info[1])
+        extra['original_exc_type'] = str(info[0])
         # get our exception info and try to extract extra information out of it
         exc = LeverException(msg, code=code, extra=extra, end_user=end_user,
                              params=self.params)
@@ -418,9 +419,9 @@ class API(MethodView):
             for key, value in six.iteritems(filter_by):
                 try:
                     query = query.filter_by(**{key: value})
-                except AttributeError:
+                except sqlalchemy.exc.InvalidRequestError:
                     raise LeverSyntaxError(
-                        'Filter_by key "{1}" accessed invalid field'
+                        'Filter_by key "{0}" accessed invalid field'
                         .format(key))
 
         return query
