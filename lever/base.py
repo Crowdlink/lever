@@ -2,6 +2,7 @@ from flask.views import MethodView
 from flask import jsonify, current_app, request
 
 import json
+import six
 import sqlalchemy
 import sys
 import calendar
@@ -126,12 +127,18 @@ class API(MethodView):
         code = None
         try:
             return meth(*args, **kwargs)
+        except Exception:
+            # capture the info
+            info = sys.exc_info()
 
+        try:
+            # reraise to handle differnet exceptions differently
+            raise info[1]
         # Common API errors
         except KeyError as e:
-            msg = 'Incorrect syntax or missing key ' + str(e.message)
+            msg = 'Incorrect syntax or missing key ' + str(e)
             code = 400
-            extra = {'key': e.message}
+            extra = {'key': str(e)}
         except AttributeError:
             msg = 'Incorrect syntax or missing key'
             code = 400
@@ -166,13 +173,11 @@ class API(MethodView):
         except:
             raise
 
-        info = sys.exc_info()
-        extra['original_exc'] = info[1].message
+        extra['original_exc'] = str(info[1])
         # get our exception info and try to extract extra information out of it
         exc = LeverException(msg, code=code, extra=extra, end_user=end_user,
                              params=self.params)
-        raise LeverException, exc, info[2]
-
+        six.reraise(LeverException, exc, tb=info[2])
 
     def get_obj(self):
         pkey = self.params.pop(self.pkey_val, None)
@@ -189,7 +194,7 @@ class API(MethodView):
     def get(self):
         """ Retrieve an object from the database """
         # convert args to a real dictionary that can be popped
-        self.params = dict((one, two) for one, two in request.args.iteritems())
+        self.params = dict((one, two) for one, two in six.iteritems(request.args))
         join = self.params.pop('join_prof', 'standard_join')
         obj = self.get_obj()
         if obj:  # if a int primary key is passed
@@ -231,9 +236,9 @@ class API(MethodView):
         try:
             model = getattr(self.model, self.create_method)(**self.params)
         except TypeError as e:
-            if 'argument' in e.message:
+            if 'argument' in str(e):
                 msg = "Wrong number of arguments supplied for create."
-                raise LeverSyntaxError, msg, sys.exc_info()[2]
+                six.reraise(LeverSyntaxError, msg, tb=sys.exc_info()[2])
             else:
                 raise
 
@@ -264,10 +269,10 @@ class API(MethodView):
         try:
             ret = getattr(obj, action)(**self.params)
         except TypeError as e:
-            if 'argument' in e.message:
+            if 'argument' in str(e):
                 msg = ("Wrong number of arguments supplied for action {}."
                        .format(action))
-                raise LeverSyntaxError, msg, sys.exc_info()[2]
+                six.reraise(LeverSyntaxError, msg, tb=sys.exc_info()[2])
             else:
                 raise
 
@@ -286,7 +291,7 @@ class API(MethodView):
         except (LeverException, KeyError, AttributeError):
             raise
         except Exception as e:
-            if 'not JSON serializable' in e.message:
+            if 'not JSON serializable' in str(e):
                 raise LeverServerError(
                     "Response was not JSON serializable, patch method returned"
                     " invalid data.",
@@ -307,7 +312,7 @@ class API(MethodView):
             raise LeverNotFound("Could not find any object to update")
 
         # updates all fields if data is provided, checks acl
-        for key, val in self.params.iteritems():
+        for key, val in six.iteritems(self.params):
             current_app.logger.debug(
                 "Updating value for '{}' to '{}'".format(key, val))
             assert obj.can('edit_' + key), "Can't edit key {} on type {}"\
@@ -358,7 +363,7 @@ class API(MethodView):
         try:
             if filters:
                 # it's a json encoded parameter to get
-                if isinstance(filters, basestring):
+                if isinstance(filters, six.string_types):
                     filters = safe_json(filters)
                 for op in filters:
                     args = []
@@ -392,7 +397,7 @@ class API(MethodView):
         try:
             if order_by:
                 # it's a json encoded parameter to get
-                if isinstance(order_by, basestring):
+                if isinstance(order_by, six.string_types):
                     order_by = safe_json(order_by)
                 for key in order_by:
                     if key.startswith('-'):
@@ -408,9 +413,9 @@ class API(MethodView):
         filter_by = self.params.pop('__filter_by', None)
         if filter_by:
             # it's a json encoded parameter to get
-            if isinstance(filter_by, basestring):
+            if isinstance(filter_by, six.string_types):
                 filter_by = safe_json(filter_by)
-            for key, value in filter_by.items():
+            for key, value in six.iteritems(filter_by):
                 try:
                     query = query.filter_by(**{key: value})
                 except AttributeError:
@@ -440,7 +445,7 @@ def get_joined(obj, join_prof="standard_join"):
 
     # split the join list into it's compoenents, obj to be removed, sub
     # object join data, and current object join values
-    if isinstance(join_prof, basestring):
+    if isinstance(join_prof, six.string_types):
         join = getattr(obj, join_prof)
     else:
         join = join_prof
@@ -449,7 +454,7 @@ def get_joined(obj, join_prof="standard_join"):
     sub_obj = []
     join_keys = []
     for key in join:
-        if isinstance(key, basestring):
+        if isinstance(key, six.string_types):
             if key.startswith('-'):
                 remove.append(key[1:])
             else:
@@ -500,7 +505,7 @@ def safe_json(json_string):
     except Exception as e:
         raise LeverSyntaxError(
             "Error decoding JSON parameters. Original exception was {}"
-            .format(e.message))
+            .format(e))
 
 
 def jsonize(obj, args, raw=False):

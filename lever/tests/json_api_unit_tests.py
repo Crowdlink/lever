@@ -16,12 +16,12 @@ class TestBasic(TestModelsPrefilled):
         if headers is None:
             headers = {}
         response = self.app.get(uri, query_string=params, headers=headers)
-        print response.status_code
-        print response.data
+        print(response.status_code)
         assert response.status_code == status_code
         if has_data:
             assert response.data
-        j = json.loads(response.data)
+        j = json.loads(response.data.decode('utf8'))
+        pprint(j)
         if success and status_code == 200:
             assert j['success']
         else:
@@ -37,9 +37,9 @@ class TestBasic(TestModelsPrefilled):
             data=json.dumps(params),
             headers=headers,
             content_type='application/json')
-        print response.status_code
-        print response.data
-        j = json.loads(response.data)
+        print(response.status_code)
+        j = json.loads(response.data.decode('utf8'))
+        pprint(j)
         assert response.status_code == status_code
         if has_data:
             assert response.data

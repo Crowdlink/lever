@@ -2,6 +2,8 @@ from flask import current_app
 from flask.ext.login import current_user
 from flask.ext.sqlalchemy import BaseQuery
 
+import six
+
 
 class BaseMapper(object):
     """ The base model instance for all model. Provides lots of useful
@@ -61,6 +63,6 @@ class BaseMapper(object):
     def _inherit_roles(cls, user=current_user, **kwargs):
         """ a utility method that prefixes the roles of parents """
         r = []
-        for prefix, obj in kwargs.items():
+        for prefix, obj in six.iteritems(kwargs):
             r += [prefix + "_" + i for i in obj.roles(user=user)]
         return r

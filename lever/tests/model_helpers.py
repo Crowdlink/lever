@@ -123,7 +123,7 @@ class TestModels(FlaskTestBase):
                 return False
 
             def get_id(self):
-                return unicode(self.id)
+                return str(self.id)
 
             @classmethod
             def create(cls, username, password, user=current_user):
@@ -178,6 +178,7 @@ class TestModels(FlaskTestBase):
             self.flaskapp.logger.debug("Extra: {}\nEnd User: {}"
                                        .format(exc.extra, exc.end_user),
                                        exc_info=True)
+            print(str(exc.end_user))
             return jsonify(**exc.end_user), exc.code
 
         # create all the tables required for the models
