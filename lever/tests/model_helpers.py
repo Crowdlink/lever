@@ -175,7 +175,7 @@ class TestModels(FlaskTestBase):
         # recommendations
         @self.flaskapp.errorhandler(LeverException)
         def handler(exc):
-            self.flaskapp.logger.debug("Extra: {}\nEnd User: {}"
+            self.flaskapp.logger.debug("Extra: {0}\nEnd User: {1}"
                                        .format(exc.extra, exc.end_user),
                                        exc_info=True)
             print(str(exc.end_user))

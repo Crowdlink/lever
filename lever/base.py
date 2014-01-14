@@ -111,7 +111,7 @@ class API(MethodView):
             return getattr(self.model, self.pkey_val)
         except AttributeError:
             raise AttributeError(
-                'Invalid primary key defined for model {}'
+                'Invalid primary key defined for model {0}'
                 .format(self.model.__class__.__name__))
 
     def dispatch_request(self, *args, **kwargs):
@@ -270,7 +270,7 @@ class API(MethodView):
             ret = getattr(obj, action)(**self.params)
         except TypeError as e:
             if 'argument' in str(e):
-                msg = ("Wrong number of arguments supplied for action {}."
+                msg = ("Wrong number of arguments supplied for action {0}."
                        .format(action))
                 six.reraise(LeverSyntaxError, msg, tb=sys.exc_info()[2])
             else:
@@ -314,8 +314,8 @@ class API(MethodView):
         # updates all fields if data is provided, checks acl
         for key, val in six.iteritems(self.params):
             current_app.logger.debug(
-                "Updating value for '{}' to '{}'".format(key, val))
-            assert obj.can('edit_' + key), "Can't edit key {} on type {}"\
+                "Updating value for '{0}' to '{1}'".format(key, val))
+            assert obj.can('edit_' + key), "Can't edit key {0} on type {1}"\
                 .format(key, self.model.__name__)
             setattr(obj, key, val)
 
@@ -380,12 +380,12 @@ class API(MethodView):
         except AttributeError:
             current_app.logger.debug("Attribute filter error", exc_info=True)
             raise LeverSyntaxError(
-                'Filter operator "{}" accessed invalid field'
+                'Filter operator "{0}" accessed invalid field'
                 .format(op))
         except KeyError:
             current_app.logger.debug("Key filter error", exc_info=True)
             raise LeverSyntaxError(
-                'Filter operator "{}" was missing required arguments'
+                'Filter operator "{0}" was missing required arguments'
                 .format(op))
         except TypeError:
             current_app.logger.debug("Argument count error", exc_info=True)
@@ -407,7 +407,7 @@ class API(MethodView):
                     query = query.order_by(base)
         except AttributeError:
             raise LeverSyntaxError(
-                'Order_by operator "{}" accessed invalid field'
+                'Order_by operator "{0}" accessed invalid field'
                 .format(key))
 
         filter_by = self.params.pop('__filter_by', None)
@@ -420,7 +420,7 @@ class API(MethodView):
                     query = query.filter_by(**{key: value})
                 except AttributeError:
                     raise LeverSyntaxError(
-                        'Filter_by key "{}" accessed invalid field'
+                        'Filter_by key "{1}" accessed invalid field'
                         .format(key))
 
         return query
@@ -520,7 +520,7 @@ def jsonize(obj, args, raw=False):
                 attr = attr()
             except TypeError:
                 current_app.logger.warn(
-                    "{} callable requires argument on obj {}"
+                    "{0} callable requires argument on obj {1}"
                     .format(str(attr), obj.__class__.__name__))
                 continue
         # convert datetime to seconds since epoch, much more universal
