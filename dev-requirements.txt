@@ -3,3 +3,4 @@ Flask-SQLAlchemy
 nose
 nose-progressive
 coverage
+pyyaml
