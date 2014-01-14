@@ -1,0 +1,14 @@
+language: python
+python:
+    - "2.7"
+    - "3.3"
+# command to install dependencies
+install:
+    - "pip install . --use-mirrors"
+    - "pip install -r dev-requirements.txt --use-mirrors"
+    - "pip install python-coveralls"
+# command to run tests
+script:
+    - nosetests --with-coverage --cover-package=lever
+after_success:
+    - coveralls
