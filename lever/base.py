@@ -30,7 +30,7 @@ will always be passed back on the Exception.
     KeyError, AttributeError, or child of LeverException will cause a 500.  """
     code = 500
 
-    def __init__(self, message, code=None, end_user=None, extra=None, params=None):
+    def __init__(self, message, code=None, end_user=None, extra=None):
         Exception.__init__(self, message)
         if code is not None:
             self.code = code
@@ -43,8 +43,6 @@ will always be passed back on the Exception.
             self.extra = {}
         else:
             self.extra = extra
-        if params is not None:
-            self.extra['params'] = params
         self.end_user.update({'message': message})
 
 
@@ -122,14 +120,17 @@ class API(MethodView):
             meth = getattr(self, 'get', None)
         assert meth is not None, 'Unimplemented method %r' % request.method
 
-        extra = {}
-        end_user = {'success': False}
-        code = None
         try:
             return meth(*args, **kwargs)
         except Exception:
             # capture the info
             info = sys.exc_info()
+
+        extra = {'original_exc': str(info[1]),
+                 'original_exc_type': str(info[0]),
+                 'params': self.params}
+        end_user = {'success': False}
+        code = None
 
         try:
             # reraise to handle differnet exceptions differently
@@ -146,9 +147,12 @@ class API(MethodView):
             msg = "You don't have permission to do that"
             code = 403
         except LeverException as e:
-            # set some default params for manually raised exceptions
-            if 'success' not in e.end_user:
-                e.end_user['success'] = False
+            # add in the default params, but let the manually raised exception
+            # take precedence
+            end_user.update(e.end_user)
+            extra.update(e.extra)
+            e.extra = extra
+            e.end_user = end_user
             raise e
 
         # SQLAlchemy exceptions
@@ -173,11 +177,8 @@ class API(MethodView):
         except:
             raise
 
-        extra['original_exc'] = str(info[1])
-        extra['original_exc_type'] = str(info[0])
         # get our exception info and try to extract extra information out of it
-        exc = LeverException(msg, code=code, extra=extra, end_user=end_user,
-                             params=self.params)
+        exc = LeverException(msg, code=code, extra=extra, end_user=end_user)
         six.reraise(LeverException, exc, tb=info[2])
 
     def get_obj(self):
