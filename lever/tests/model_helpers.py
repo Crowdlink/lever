@@ -20,7 +20,8 @@ from sqlalchemy import (Column, create_engine, DateTime, Date, Float,
                         ForeignKey, Integer, Boolean, Unicode)
 from sqlalchemy.ext.declarative import declarative_base
 
-from lever import API, LeverException, BaseMapper
+from lever import API, LeverException
+from lever.mapper import BaseMapper
 
 
 class FlaskTestBase(unittest.TestCase):
