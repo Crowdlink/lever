@@ -439,7 +439,9 @@ class API(MethodView):
 def get_joined(obj, join_prof="standard_join"):
     # If it's a list, join each of the items in the list and return
     # modified list
-    if isinstance(obj, sqlalchemy.orm.Query) or isinstance(obj, list):
+    if isinstance(obj, (sqlalchemy.orm.Query,
+                        sqlalchemy.orm.collections.InstrumentedList,
+                        list)):
         lst = []
         for item in obj:
             lst.append(get_joined(item, join_prof=join_prof))
