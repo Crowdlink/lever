@@ -1,4 +1,4 @@
-from flask.views import MethodView
+from flask.views import MethodView, MethodViewType
 from flask import jsonify, current_app, request
 
 import json
@@ -95,13 +95,85 @@ OPERATORS = {
 }
 
 
+class preprocess(object):
+    """ Simple decorator that sets special attributes on decorated methods.
+    These attributes get picked up by our __new__ method and assign
+    preprocessors for specific actions or methods """
+    def __init__(self, method=None, action=None):
+        self.action = action
+        self.method = method
+
+    def __call__(self, f):
+        f._pre_action = self.action
+        f._pre_method = self.method
+        return f
+
+class postprocess(preprocess):
+    def __call__(self, f):
+        f._post_action = self.action
+        f._post_method = self.method
+        return f
+
+
+
+class ImposterMixin(object):
+    """ Allows a user with a specific permission key to perform an action as if
+    they were another user. Useful for system administrators and the like. """
+    pass
+
+
+class UserACLMixin(object):
+    """ Allows ACL lookups from a user object. Expects current_user attribute
+    to be set to an application LocalProxy that yeilds the user object for the
+    request. This is the most common ACL system used with Lever. """
+
+    @preprocess('post')
+    def impersonate(self):
+        # check to ensure the user can create for others if requested
+        username = self.params.pop('__username', None)
+        userid = self.params.pop('__user_id', None)
+        if userid or username:
+            query = self.model.query
+            if userid:
+                query = query.filter_by(id=userid)
+            if username:
+                query = query.filter_by(username=username)
+            self.params['user'] = query.one()
+            self.create_hook()
+            assert self.can_cls('class_create_other', params=self.params), "Cant create for other users"
+        else:
+            self.params['user'] = self.current_user.get()
+            self.create_hook()
+            assert self.can_cls('class_create'), "Cant create that object"
+
 class API(MethodView):
+    """ The main method that underlies Lever. Create a new class that inherits
+    from this and set the session to your database session, model to the model
+    that you're wrapping and basic functionality should be good to go. """
     max_pg_size = 100
+    # Defines the maximum pagination size that the client can select
     pkey_val = 'id'
+    # defines the primary key for your model. this value will be expected on
+    # get and updates
     create_method = 'create'
     params = {}
     session = None
-    current_user = None
+    # The database session from SQLAlchemy
+
+    class __metaclass__(MethodViewType):
+        def __init__(mcs, name, bases, dct):
+            MethodViewType.__init__(mcs, name, bases, dct)
+            for attr in dct.values():
+                types = ['_pre_method', '_post_method', '_pre_action', '_post_action']
+                for key in types:
+                    setattr(mcs, key, {})
+                    val = getattr(attr, key, None)
+                    if val:
+                        if not isinstance(val, (list, tuple)):
+                            val = (val, )
+                        for method in val:
+                            getattr(mcs, key).setdefault(method, []).append(attr)
+                    print key + ": " + str(getattr(mcs, key))
 
     @property
     def pkey(self):
@@ -197,6 +269,8 @@ class API(MethodView):
         """ Retrieve an object from the database """
         # convert args to a real dictionary that can be popped
         self.params = dict((one, two) for one, two in six.iteritems(request.args))
+        for method in self._preprocess_action['get']:
+            method()
         join = self.params.pop('join_prof', 'standard_join')
         obj = self.get_obj()
         if obj:  # if a int primary key is passed
@@ -216,53 +290,19 @@ class API(MethodView):
     def post(self):
         """ Create a new object """
         self.params = request.get_json(silent=True)
-        if not self.params:
-            raise LeverSyntaxError("To create, values must be specified")
-        # check to ensure the user can create for others if requested
-        username = self.params.pop('__username', None)
-        userid = self.params.pop('__user_id', None)
-        if userid or username:
-            query = self.model.query
-            if userid:
-                query = query.filter_by(id=userid)
-            if username:
-                query = query.filter_by(username=username)
-            self.params['user'] = query.one()
-            self.create_hook()
-            assert self.can_cls('class_create_other', params=self.params), "Cant create for other users"
-        else:
-            self.params['user'] = self.current_user.get()
-            self.create_hook()
-            assert self.can_cls('class_create'), "Cant create that object"
 
-        try:
-            model = getattr(self.model, self.create_method)(**self.params)
-        except TypeError as e:
-            if 'argument' in str(e):
-                msg = "Wrong number of arguments supplied for create."
-                six.reraise(LeverSyntaxError, msg, tb=sys.exc_info()[2])
-            else:
-                raise
-
-        self.session.commit()
-        if model:  # only return the model if we recieved it back
-            return jsonify(success=True, objects=[get_joined(model)])
-        else:
-            return jsonify(success=True)
-
-    def patch(self):
-        """ Used to execute methods on an object """
-        self.params = request.get_json(silent=True)
-        if not self.params:
-            raise LeverSyntaxError("To run an action, values must be specified")
-
-        action = self.params.pop('__action')
+        action = self.params.pop('__action', None)
         cls = self.params.pop('__cls', None)
-        if cls is None:
+        if not action:
+            cls = True
+            action = self.create_method
+
+        if not cls:
             obj = self.get_obj()
             if not obj:
-                raise LeverNotFound("Could not find any object to perform an action on")
-            assert obj.can('action_' + action), "Cant perform action " + action
+                raise LeverNotFound(
+                    "Could not find any object to perform an action on")
+            assert self.can(obj, 'action_' + action), "Cant perform action " + action
         else:
             assert self.can_cls('action_' + action), "Can't perform cls action " + action
             obj = self.model
@@ -433,7 +473,7 @@ class API(MethodView):
         symfunc = cls.as_view(cls.__name__)
         mod.add_url_rule(url,
                          view_func=symfunc,
-                         methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
+                         methods=['GET', 'POST', 'PUT', 'DELETE'])
 
 
 def get_joined(obj, join_prof="standard_join"):
