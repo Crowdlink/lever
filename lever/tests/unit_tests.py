@@ -22,6 +22,17 @@ class ProcessTests(unittest.TestCase):
         assert isinstance(APIAwesome._pre_action['something'][0],
                           types.FunctionType)
 
+    def test_inheritence_mixins(self):
+        class APIParent(object):
+            @preprocess(method='post')
+            def preprocess_those(self):
+                pass
+        class APIAwesome(API, APIParent):
+            pass
+
+        assert isinstance(APIAwesome._pre_method['post'][0],
+                          types.FunctionType)
+
     def test_inheritence(self):
         class APIParent(API):
             @preprocess(method='post')

@@ -166,10 +166,10 @@ class API(MethodView):
             types = ['_pre_method', '_post_method', '_pre_action', '_post_action']
             for key in types:
                 setattr(mcs, key, {})
+            attrs = dct.values()
             for base in bases:
-                for key in types:
-                    getattr(mcs, key).update(getattr(base, key, {}))
-            for attr in dct.values():
+                attrs.extend(base.__dict__.values())
+            for attr in attrs:
                 for key in types:
                     val = getattr(attr, key, None)
                     if val:
