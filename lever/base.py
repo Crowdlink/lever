@@ -163,17 +163,20 @@ class API(MethodView):
     class __metaclass__(MethodViewType):
         def __init__(mcs, name, bases, dct):
             MethodViewType.__init__(mcs, name, bases, dct)
-            for attr in dct.values():
-                types = ['_pre_method', '_post_method', '_pre_action', '_post_action']
+            types = ['_pre_method', '_post_method', '_pre_action', '_post_action']
+            for key in types:
+                setattr(mcs, key, {})
+            for base in bases:
                 for key in types:
-                    setattr(mcs, key, {})
+                    getattr(mcs, key).update(getattr(base, key, {}))
+            for attr in dct.values():
+                for key in types:
                     val = getattr(attr, key, None)
                     if val:
                         if not isinstance(val, (list, tuple)):
                             val = (val, )
                         for method in val:
                             getattr(mcs, key).setdefault(method, []).append(attr)
-                    print key + ": " + str(getattr(mcs, key))
 
     @property
     def pkey(self):
