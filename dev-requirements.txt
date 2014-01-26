@@ -1,4 +1,5 @@
 Flask-Login
+Flask-Testing
 Flask-SQLAlchemy
 nose
 nose-progressive

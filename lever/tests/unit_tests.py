@@ -1,12 +1,16 @@
 import unittest
 import types
 
+from flask.ext.testing import TestCase
+from flask import Flask
+
 from lever import API, preprocess, postprocess
+from lever.tests.model_helpers import FlaskTestBase
 
 
 class ProcessTests(unittest.TestCase):
     """ Ensures our metaclasses and decorators operate as we want for assigning
-    preprocessors """
+    preprocessors and postprocessors """
     def test_basic_preprocess(self):
         class APIAwesome(API):
             @preprocess(method='post')
@@ -114,3 +118,38 @@ class ProcessTests(unittest.TestCase):
 
         assert APIAwesome._pre_method == {}
         assert APIAwesome._pre_action == {}
+
+
+class TestPreprocessUsage(FlaskTestBase):
+    """ These tests ensure that preprocessors and postprocessors are getting
+    called when they should be """
+
+    def test_methods_preprocess(self):
+        for meth in ['post', 'get', 'delete', 'put']:
+            class APIAwesome(API):
+                @preprocess(method=meth)
+                def preprocessor_one(self):
+                    raise SyntaxError  # pick an obscure one to catch..
+
+            inst = APIAwesome()
+            with self.assertRaises(SyntaxError):
+                getattr(inst, meth)()
+
+    def test_methods_postprocess(self):
+        widget, api = self.basic_api()
+        obj = widget(name='Testing')
+        self.session.commit()
+        self.base.metadata.create_all(self.engine)
+        data = [('post', {'name': 'test'}),
+                ('get', {}),
+                ('put', {'id': obj.id, 'name': 'test2'}),
+                ('delete', {'id': obj.id})]
+        for meth, data in data:
+            class APIAwesome(api):
+                @postprocess(method=meth)
+                def postprocess_one(self):
+                    raise SyntaxError  # pick an obscure one to catch..
+
+            inst = APIAwesome()
+            with self.assertRaises(SyntaxError):
+                print getattr(self, meth)('widget', 500)

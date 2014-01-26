@@ -21,57 +21,6 @@ class TestCreateAPI(FlaskTestBase):
 
 class TestBasic(TestModelsPrefilled):
 
-    def get(self, uri, status_code, params=None, has_data=True, success=True,
-            headers=None):
-        if params:
-            for p in params:
-                if isinstance(params[p], dict) or isinstance(params[p], list):
-                    params[p] = json.dumps(params[p])
-        if headers is None:
-            headers = {}
-        response = self.app.get(uri, query_string=params, headers=headers)
-        print(response.status_code)
-        assert response.status_code == status_code
-        if has_data:
-            assert response.data
-        j = json.loads(response.data.decode('utf8'))
-        pprint(j)
-        if success and status_code == 200:
-            assert j['success']
-        else:
-            assert not j['success']
-        return j
-
-    def post(self, uri, status_code, params=None, has_data=True, headers=None,
-             success=True, typ='post'):
-        if headers is None:
-            headers = {}
-        response = getattr(self.app, typ)(
-            uri,
-            data=json.dumps(params),
-            headers=headers,
-            content_type='application/json')
-        print(response.status_code)
-        j = json.loads(response.data.decode('utf8'))
-        pprint(j)
-        assert response.status_code == status_code
-        if has_data:
-            assert response.data
-        if success and status_code == 200:
-            assert j['success']
-        else:
-            assert not j['success']
-        return j
-
-    def patch(self, uri, status_code, **kwargs):
-        return self.post(uri, status_code, typ='patch', **kwargs)
-
-    def put(self, uri, status_code, **kwargs):
-        return self.post(uri, status_code, typ='put', **kwargs)
-
-    def delete(self, uri, status_code, **kwargs):
-        return self.post(uri, status_code, typ='delete', **kwargs)
-
     # Get Methods
     #########################################################################
     def test_get_user(self, username="mary"):

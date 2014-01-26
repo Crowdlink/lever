@@ -146,6 +146,21 @@ class UserACLMixin(object):
             self.create_hook()
             assert self.can_cls('class_create'), "Cant create that object"
 
+
+class ModelBasedACL(object):
+    def can(self, action):
+        """ This function should parse the current parameters to gain parent
+        information for properly running can_cls on the model this API wraps
+        """
+        return self.obj.can(action)
+
+    def can_cls(self, action):
+        """ This function should parse the current parameters to gain parent
+        information for properly running can_cls on the model this API wraps
+        """
+        return self.model.can_cls(action)
+
+
 class API(MethodView):
     """ The main method that underlies Lever. Create a new class that inherits
     from this and set the session to your database session, model to the model
@@ -155,7 +170,7 @@ class API(MethodView):
     pkey_val = 'id'
     # defines the primary key for your model. this value will be expected on
     # get and updates
-    create_method = 'create'
+    create_method = '__init__'
     params = {}
     session = None
     # The database session from SQLAlchemy
@@ -209,7 +224,7 @@ class API(MethodView):
 
         try:
             # reraise to handle differnet exceptions differently
-            raise info[1]
+            six.reraise(*info)
         # Common API errors
         except KeyError as e:
             msg = 'Incorrect syntax or missing key ' + str(e)
@@ -228,7 +243,7 @@ class API(MethodView):
             extra.update(e.extra)
             e.extra = extra
             e.end_user = end_user
-            raise e
+            six.reraise(LeverException, e, tb=sys.exc_info()[2])
 
         # SQLAlchemy exceptions
         except sqlalchemy.orm.exc.NoResultFound:
@@ -266,14 +281,14 @@ class API(MethodView):
         """ This function should parse the current parameters to gain parent
         information for properly running can_cls on the model this API wraps
         """
-        return self.model.can_cls(action)
+        return True
 
     def get(self):
         """ Retrieve an object from the database """
         # convert args to a real dictionary that can be popped
         self.params = dict((one, two) for one, two in six.iteritems(request.args))
-        for method in self._preprocess_action['get']:
-            method()
+        for method in self._pre_method.get('get', []):
+            method(self)
         join = self.params.pop('join_prof', 'standard_join')
         obj = self.get_obj()
         if obj:  # if a int primary key is passed
@@ -292,8 +307,9 @@ class API(MethodView):
 
     def post(self):
         """ Create a new object """
-        self.params = request.get_json(silent=True)
-
+        self.params = request.get_json(silent=True) or {}
+        for method in self._pre_method.get('post', []):
+            method(self)
         action = self.params.pop('__action', None)
         cls = self.params.pop('__cls', None)
         if not action:
@@ -350,6 +366,8 @@ class API(MethodView):
     def put(self):
         """ Updates an objects values """
         self.params = request.get_json(silent=True)
+        for method in self._pre_method.get('put', []):
+            method(self)
         if not self.params:
             raise LeverSyntaxError("To update, values must be specified")
         obj = self.get_obj()
@@ -370,6 +388,8 @@ class API(MethodView):
 
     def delete(self):
         self.params = request.get_json(silent=True)
+        for method in self._pre_method.get('delete', []):
+            method(self)
         if not self.params:
             raise LeverSyntaxError("To delete, values must be specified")
 

@@ -1,30 +1,22 @@
-"""
-model_helpers
-~~~~~~~~~~~~~
-Provides helper functions for unit testing our unit internal API framework
-Heavily borrowed from https://github.com/jfinkels/flask-restless helper
-files
-
-:copyright: 2012 Jeffrey Finkelstein <jeffrey.finkelstein@gmail.com>
-:license: GNU AGPLv3+ or BSD
-"""
 import datetime
 import sqlalchemy
 import unittest
+import json
 
 from flask import Flask, jsonify
-from flask.ext.sqlalchemy import (_BoundDeclarativeMeta, SQLAlchemy,
-                                  _QueryProperty)
 from flask.ext.login import LoginManager, current_user, login_user
+from flask.ext.testing import TestCase
 from sqlalchemy import (Column, create_engine, DateTime, Date, Float,
-                        ForeignKey, Integer, Boolean, Unicode)
+                        ForeignKey, Integer, Boolean, Unicode, create_engine)
+from sqlalchemy.orm.scoping import scoped_session
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 
-from lever import API, LeverException
+from lever import API, LeverException, UserACLMixin
 from lever.mapper import BaseMapper
 
 
-class FlaskTestBase(unittest.TestCase):
+class FlaskTestBase(TestCase):
     """Base class for tests which use a Flask application.
 
     The Flask test client can be accessed at ``self.app``. The Flask
@@ -32,44 +24,91 @@ class FlaskTestBase(unittest.TestCase):
 
     """
 
-    def setUp(self):
+    def create_app(self):
         """Creates the Flask application and the APIManager."""
         # create the Flask application
         app = Flask(__name__)
         app.config['DEBUG'] = True
         app.config['TESTING'] = True
-        app.config['SECRET_KEY'] = "dfsglkjsdfglkjsdfg"
-        app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite://'
         del app.logger.handlers[0]
-        self.flaskapp = app
-        # add the login manager
-        self.lm = LoginManager(self.flaskapp)
         # sqlalchemy flask
-        self.db = SQLAlchemy(self.flaskapp)
-        self.base = declarative_base(cls=BaseMapper,
-                                     metaclass=_BoundDeclarativeMeta,
-                                     metadata=self.db.MetaData(),
-                                     name='Model')
-        self.base.query = _QueryProperty(self.db)
-        self.db.Model = self.base
+        self.base = declarative_base()
+        self.engine = create_engine('sqlite://')
+        self.session = scoped_session(sessionmaker(autocommit=False,
+                                                   autoflush=False,
+                                                   bind=self.engine))
+        return app
 
-        # create the test client
-        self.app = app.test_client()
+    def get(self, uri, status_code, params=None, has_data=True, success=True,
+            headers=None):
+        if params:
+            for p in params:
+                if isinstance(params[p], dict) or isinstance(params[p], list):
+                    params[p] = json.dumps(params[p])
+        if headers is None:
+            headers = {}
+        response = self.client.get(uri, query_string=params, headers=headers)
+        print(response.status_code)
+        assert response.status_code == status_code
+        if has_data:
+            assert response.data
+        j = json.loads(response.data.decode('utf8'))
+        pprint(j)
+        if success and status_code == 200:
+            assert j['success']
+        else:
+            assert not j['success']
+        return j
 
-        # Ensure that all requests have Content-Type set to "application/json"
-        # unless otherwise specified.
-        for methodname in ('get', 'put', 'patch', 'post', 'delete'):
-            # Create a decorator for the test client request methods that adds
-            # a JSON Content-Type by default if none is specified.
-            def set_content_type(func):
-                def new_func(*args, **kw):
-                    if 'content_type' not in kw:
-                        kw['content_type'] = 'application/json'
-                    return func(*args, **kw)
-                return new_func
-            # Decorate the original test client request method.
-            old_method = getattr(self.app, methodname)
-            setattr(self.app, methodname, set_content_type(old_method))
+    def post(self, uri, status_code, params=None, has_data=True, headers=None,
+             success=True, typ='post'):
+        if headers is None:
+            headers = {}
+        response = getattr(self.client, typ)(
+            uri,
+            data=json.dumps(params),
+            headers=headers,
+            content_type='application/json')
+        print(response.status_code)
+        j = json.loads(response.data.decode('utf8'))
+        pprint(j)
+        assert response.status_code == status_code
+        if has_data:
+            assert response.data
+        if success and status_code == 200:
+            assert j['success']
+        else:
+            assert not j['success']
+        return j
+
+    def patch(self, uri, status_code, **kwargs):
+        return self.post(uri, status_code, typ='patch', **kwargs)
+
+    def put(self, uri, status_code, **kwargs):
+        return self.post(uri, status_code, typ='put', **kwargs)
+
+    def delete(self, uri, status_code, **kwargs):
+        return self.post(uri, status_code, typ='delete', **kwargs)
+
+    def basic_api(self):
+        """ Generates a basic API endpoint with Lever to be tested """
+        class Widget(self.base):
+            __tablename__ = 'testing'
+            id = Column(Integer, primary_key=True)
+            name = Column(Unicode, unique=True)
+            description = Column(Unicode)
+            created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+            standard_join = ['name', 'created_at', 'id', 'description']
+
+        class WidgetAPI(API):
+            model = Widget
+            session = self.session
+            current_user = current_user
+
+        self.app.add_url_rule('/widget', view_func=WidgetAPI.as_view('widget'))
+
+        return Widget, WidgetAPI
 
 
 class TestModels(FlaskTestBase):
@@ -163,7 +202,7 @@ class TestModels(FlaskTestBase):
             except sqlalchemy.orm.exc.NoResultFound:
                 return None
 
-        class UserAPI(API):
+        class UserAPI(API, UserACLMixin):
             model = User
             session = self.db.session
             current_user = current_user
@@ -196,18 +235,6 @@ class TestModels(FlaskTestBase):
 
 
 class TestModelsPrefilled(TestModels):
-    """Base class for tests which use a database and have an
-    :class:`flask_restless.APIManager` with a :class:`flask.Flask` app object.
-
-    The test client for the :class:`flask.Flask` application is accessible to
-    test functions at ``self.app`` and the :class:`flask_restless.APIManager`
-    is accessible at ``self.manager``.
-
-    The database will be prepopulated with five ``Person`` objects. The list of
-    these objects can be accessed at ``self.people``.
-
-    """
-
     def setUp(self):
         """Creates the database, the Flask application, and the APIManager."""
         # create the database
