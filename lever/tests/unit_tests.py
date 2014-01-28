@@ -3,9 +3,12 @@ import types
 
 from flask.ext.testing import TestCase
 from flask import Flask
+from pprint import pprint
+from sqlalchemy import (Column, create_engine, DateTime, Date, Float,
+                        ForeignKey, Integer, Boolean, Unicode, create_engine)
 
 from lever import API, preprocess, postprocess
-from lever.tests.model_helpers import FlaskTestBase
+from lever.tests.model_helpers import FlaskTestBase, TestUserACL
 
 
 class ProcessTests(unittest.TestCase):
@@ -120,7 +123,7 @@ class ProcessTests(unittest.TestCase):
         assert APIAwesome._pre_action == {}
 
 
-class TestPreprocessUsage(FlaskTestBase):
+class TestProcessorUsage(FlaskTestBase):
     """ These tests ensure that preprocessors and postprocessors are getting
     called when they should be """
 
@@ -136,20 +139,217 @@ class TestPreprocessUsage(FlaskTestBase):
                 getattr(inst, meth)()
 
     def test_methods_postprocess(self):
-        widget, api = self.basic_api()
-        obj = widget(name='Testing')
-        self.session.commit()
-        self.base.metadata.create_all(self.engine)
+        obj = self.provision_single_asset()
         data = [('post', {'name': 'test'}),
                 ('get', {}),
                 ('put', {'id': obj.id, 'name': 'test2'}),
                 ('delete', {'id': obj.id})]
-        for meth, data in data:
-            class APIAwesome(api):
+        for meth, vals in data:
+            class APIAwesome(self.widget_api):
                 @postprocess(method=meth)
-                def postprocess_one(self):
+                def postprocess_one(self, retval):
                     raise SyntaxError  # pick an obscure one to catch..
 
-            inst = APIAwesome()
+            self.app.add_url_rule('/' + meth, view_func=APIAwesome.as_view(meth))
+
+        for meth, vals in data:
             with self.assertRaises(SyntaxError):
-                print getattr(self, meth)('widget', 500)
+                getattr(self, meth)(meth, 500, params=vals)
+
+
+class TestAPICreation(FlaskTestBase):
+    def test_create_bad_pkey(self):
+        """ ensure that exception is thrown for invalid primary_key """
+        class Testing(self.base):
+            __tablename__ = "testing_table"
+            bad_id = Column(Integer, primary_key=True)
+
+        class UserAPI(API):
+            model = Testing
+            session = self.session
+
+        t = UserAPI()
+        self.assertRaises(AttributeError, lambda: t.pkey)
+
+
+class TestGet(FlaskTestBase):
+    """ Test facets of our get method """
+
+    def test_get_pkey(self):
+        obj = self.provision_single_asset()
+        d = self.get('widget', 200, {'id': obj.id})
+        assert len(d['objects']) > 0
+        assert d['objects'][0]['id'] == obj.id
+
+    def test_many_query(self):
+        self.provision_many_asset()
+        d = self.get('widget', 200)
+        assert len(d['objects']) >= 4
+
+
+class TestPut(FlaskTestBase):
+    """ Test facets of our get method """
+    def test_update(self):
+        """ can we change an object """
+        obj = self.provision_single_asset()
+        test_string = "testing this thing"
+        p = {'id': obj.id, 'description': test_string}
+        self.put('widget', 200, params=p)
+        self.session.refresh(obj)
+        assert obj.description == test_string
+
+    def test_cant_find(self):
+        self.basic_api()
+        self.base.metadata.create_all(self.engine)
+        ret = self.put('widget', 404, params={'id': 123})
+        assert 'not be found' in ret['message']
+
+    def test_cant_find_invalid_key(self):
+        self.basic_api()
+        self.base.metadata.create_all(self.engine)
+        ret = self.put('widget', 404, params={'tid': 123})
+        assert 'any object to update' in ret['message']
+
+
+class TestDelete(FlaskTestBase):
+    def test_delete(self):
+        """ can we delete an object """
+        obj = self.provision_single_asset()
+        obj_id = obj.id
+        self.delete('widget', 200, params={'id': obj_id})
+        obj = self.session.query(self.widget_model).filter_by(id=obj_id).first()
+        assert obj is None
+
+    def test_cant_find_put_delete(self):
+        self.basic_api()
+        self.base.metadata.create_all(self.engine)
+        ret = self.delete('widget', 404, params={'id': 123})
+        assert 'Object could not be found' in ret['message']
+
+    def test_cant_find(self):
+        self.basic_api()
+        self.base.metadata.create_all(self.engine)
+        ret = self.delete('widget', 404, params={'tid': 123})
+        assert 'object to delete' in ret['message']
+
+
+class TestPost(FlaskTestBase):
+    def test_create_dup(self):
+        """ make a duplicate entry and fail """
+        obj = self.provision_single_asset()
+        p = self.post('widget', 409, params={'name': u'Testing'})
+        assert 'duplicate value already' in p['message']
+
+    def test_create_new(self):
+        """ try creating a new object """
+        self.basic_api()
+        self.base.metadata.create_all(self.engine)
+        p = self.post('widget', 200, params={'name': u'Testing'})
+        assert p['objects'][0]['name'] == 'Testing'
+
+    def test_bad_action(self):
+        obj = self.provision_single_asset()
+        p = {'id': obj.id, '__action': 'dsflgjksdfglk'}
+        ret = self.post('widget', 400, params=p)
+        assert 'missing key' in ret['message']
+
+
+class TestSearch(FlaskTestBase):
+    """ Run a bunch of positive and negative tests on our searching system """
+    def test_filter_by(self):
+        obj = self.provision_single_asset()
+        d = self.get('widget', 200, {'__filter_by': {'name': obj.name}})
+        assert len(d['objects']) > 0
+        assert d['objects'][0]['name'] == obj.name
+
+    def test_single_failure(self):
+        self.basic_api()
+        self.base.metadata.create_all(self.engine)
+        ret = self.get('widget', 404, params={'__one': True})
+        assert 'not be found' in ret['message']
+
+    def test_query_bad_param_filter_by(self):
+        self.basic_api()
+        ret = self.get('widget', 400, params={'__filter_by': {'sdflgj': True}})
+        assert 'invalid field' in ret['message']
+
+    def test_query_filter(self):
+        obj = self.provision_single_asset()
+        ret = self.get('widget', 200,
+                       params={'__filter': [
+                           {'val': 'Testing', 'name': 'name', 'op': 'eq'}]})
+        assert ret['objects'][0]['name'] == 'Testing'
+
+    def test_query_filter_field(self):
+        """ test filtering by comparing different fields to eachother """
+        obj = self.provision_single_asset()
+        # TODO: Write a positive test for this
+        ret = self.get('widget', 200,
+                       params={'__filter': [
+                           {'field': 'created_at', 'name': 'name', 'op': 'eq'}]})
+        assert len(ret['objects']) == 0
+
+    def test_query_bad_param_filter(self):
+        self.basic_api()
+        ret = self.get('widget', 400,
+                       params={'__filter': [
+                           {'val': True, 'name': 'dsflgjsdflgk', 'op': 'eq'}]})
+        assert 'invalid field' in ret['message']
+
+    def test_query_bad_param_op(self):
+        self.basic_api()
+        ret = self.get('widget', 400,
+                 params={'__filter': [
+                     {'val': True, 'name': 'name', 'op': 'fake'}]})
+        assert 'operator specified in' in ret['message']
+
+    def test_query_missing_param(self):
+        self.basic_api()
+        ret = self.get('widget', 400,
+                 params={'__filter': [
+                     {'val': True, 'name': 'name', 'op2': 'fake'}]})
+        assert 'missing required arguments' in ret['message']
+
+    def test_query_bad_param_count(self):
+        self.basic_api()
+        ret = self.get('widget', 400,
+                 params={'__filter': [{'name': 'name', 'op': '=='}]})
+        assert 'argument count' in ret['message']
+
+    def test_order_by(self):
+        self.provision_many_asset()
+        ret = self.get('widget', 200, params={'__order_by': ['id']})
+        assert len(ret['objects']) >= 4
+        assert ret['objects'][0]['id'] < ret['objects'][1]['id']
+        assert ret['objects'][2]['id'] < ret['objects'][3]['id']
+
+    def test_order_by_desc(self):
+        self.provision_many_asset()
+        ret = self.get('widget', 200, params={'__order_by': ['-id']})
+        assert len(ret['objects']) >= 4
+        assert ret['objects'][0]['id'] > ret['objects'][1]['id']
+        assert ret['objects'][2]['id'] > ret['objects'][3]['id']
+
+    def test_order_by_bad_key(self):
+        self.basic_api()
+        ret = self.get('widget', 400, params={'__order_by': ['dflgjksdfgl']})
+        assert 'Order_by operator' in ret['message']
+
+
+class TestLogin(TestUserACL):
+    """ Tests abilities of the User ACL mixin class """
+    def test_login(self):
+        """ can we login with a patch action """
+        self.user_api()
+        self.base.metadata.create_all(self.engine)
+        people = self.provision_users()
+        p = {'__action': 'login', 'id': people[0].id, 'password': "testing"}
+        self.post('user', 200, params=p)
+
+    def test_delete_fail(self):
+        """ will delete fail with bad permissions? """
+        self.user_api()
+        self.base.metadata.create_all(self.engine)
+        people = self.provision_users()
+        p = {'id': people[2].id}
+        self.delete('user', 403, params=p)

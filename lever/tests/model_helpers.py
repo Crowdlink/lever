@@ -11,12 +11,13 @@ from sqlalchemy import (Column, create_engine, DateTime, Date, Float,
 from sqlalchemy.orm.scoping import scoped_session
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
+from pprint import pprint
 
-from lever import API, LeverException, UserACLMixin
+from lever import API, LeverException, ModelBasedACL, ImpersonateMixin
 from lever.mapper import BaseMapper
 
 
-class FlaskTestBase(TestCase):
+class FlaskTestBase(unittest.TestCase):
     """Base class for tests which use a Flask application.
 
     The Flask test client can be accessed at ``self.app``. The Flask
@@ -24,12 +25,13 @@ class FlaskTestBase(TestCase):
 
     """
 
-    def create_app(self):
+    def setUp(self):
         """Creates the Flask application and the APIManager."""
         # create the Flask application
         app = Flask(__name__)
         app.config['DEBUG'] = True
         app.config['TESTING'] = True
+        app.config['SECRET_KEY'] = "testing..."
         del app.logger.handlers[0]
         # sqlalchemy flask
         self.base = declarative_base()
@@ -37,6 +39,20 @@ class FlaskTestBase(TestCase):
         self.session = scoped_session(sessionmaker(autocommit=False,
                                                    autoflush=False,
                                                    bind=self.engine))
+        self.app = app
+        self._ctx = self.app.test_request_context()
+        self._ctx.push()
+        self.client = self.app.test_client()
+
+        # Add an error handler that returns straight LeverException
+        # recommendations
+        @self.app.errorhandler(LeverException)
+        def handler(exc):
+            self.app.logger.debug("Extra: {0}\nEnd User: {1}"
+                                       .format(exc.extra, exc.end_user),
+                                       exc_info=True)
+            return jsonify(**exc.end_user), exc.code
+
         return app
 
     def get(self, uri, status_code, params=None, has_data=True, success=True,
@@ -49,11 +65,12 @@ class FlaskTestBase(TestCase):
             headers = {}
         response = self.client.get(uri, query_string=params, headers=headers)
         print(response.status_code)
-        assert response.status_code == status_code
+        print(response.data)
         if has_data:
             assert response.data
         j = json.loads(response.data.decode('utf8'))
         pprint(j)
+        assert response.status_code == status_code
         if success and status_code == 200:
             assert j['success']
         else:
@@ -70,6 +87,7 @@ class FlaskTestBase(TestCase):
             headers=headers,
             content_type='application/json')
         print(response.status_code)
+        print(response.data)
         j = json.loads(response.data.decode('utf8'))
         pprint(j)
         assert response.status_code == status_code
@@ -101,6 +119,7 @@ class FlaskTestBase(TestCase):
 
             standard_join = ['name', 'created_at', 'id', 'description']
 
+
         class WidgetAPI(API):
             model = Widget
             session = self.session
@@ -110,21 +129,39 @@ class FlaskTestBase(TestCase):
 
         return Widget, WidgetAPI
 
+    def provision_single_asset(self):
+        widget, api = self.basic_api()
+        self.widget_api = api
+        self.widget_model = widget
+        self.base.metadata.create_all(self.engine)
+        obj = widget(name=u'Testing')
+        self.session.add(obj)
+        self.session.commit()
+        return obj
 
-class TestModels(FlaskTestBase):
-    """Base class for test cases which use a database with some basic models.
+    def provision_many_asset(self):
+        widget, api = self.basic_api()
+        self.base.metadata.create_all(self.engine)
+        objs = []
+        for name in [u'sdflgk', u'owuertoi', u'lcxvmnl', u'dlfkjgdsfg']:
+            objs.append(widget(name=name))
+        self.session.add_all(objs)
+        self.session.commit()
+        return objs
 
-    """
+
+class TestUserACL(FlaskTestBase):
+    """ Used to test full model based ACL system that integrates parent object
+    ACL and global user acl roles """
 
     def setUp(self):
-        """Creates some example models and creates the database tables.
+        super(TestUserACL, self).setUp()
+        self.lm = LoginManager(self.app)
 
-        This class defines a whole bunch of models with various properties for
-        use in testing, so look here first when writing new tests.
-        """
-        super(TestModels, self).setUp()
-
+    def user_api(self):
+        self.base = declarative_base(cls=BaseMapper)
         class User(self.base):
+            __tablename__ = "user"
             id = Column(Integer, primary_key=True)
             username = Column(Unicode, unique=True)
             description = Column(Unicode)
@@ -148,7 +185,7 @@ class TestModels(FlaskTestBase):
                     return ['admin', 'user']
                 return ['user']
 
-            def login(self, password):
+            def login(self, password, user=None):
                 if password == self.password:
                     login_user(self)
                     return True
@@ -202,52 +239,28 @@ class TestModels(FlaskTestBase):
             except sqlalchemy.orm.exc.NoResultFound:
                 return None
 
-        class UserAPI(API, UserACLMixin):
+        class UserAPI(ModelBasedACL, API):
             model = User
-            session = self.db.session
-            current_user = current_user
+            session = self.session
 
-        self.flaskapp.add_url_rule('/api/user',
-                                   view_func=UserAPI.as_view('user'))
-        self.User = User
-        self.UserAPI = UserAPI
-
-        # Add an error handler that returns straight LeverException
-        # recommendations
-        @self.flaskapp.errorhandler(LeverException)
-        def handler(exc):
-            self.flaskapp.logger.debug("Extra: {0}\nEnd User: {1}"
-                                       .format(exc.extra, exc.end_user),
-                                       exc_info=True)
-            print(str(exc.end_user))
-            return jsonify(**exc.end_user), exc.code
-
-        # create all the tables required for the models
-        self.db.create_all()
+        self.app.add_url_rule('/user', view_func=UserAPI.as_view('user'))
+        self.user_model = User
+        self.user_api = UserAPI
 
     def login(self, username):
         login_user(self.User.query.filter_by(username=username).one())
 
-    def tearDown(self):
-        """Drops all tables from the temporary database."""
-        #self.session.remove()
-        self.db.drop_all()
-
-
-class TestModelsPrefilled(TestModels):
-    def setUp(self):
+    def provision_users(self):
         """Creates the database, the Flask application, and the APIManager."""
-        # create the database
-        super(TestModelsPrefilled, self).setUp()
-        # create some people in the database for testing
-        self.people = []
+        people = []
         for u in ['mary', 'lucy', 'katy', 'john']:
-            user = self.User(username=u, password='testing')
-            self.people.append(user)
+            user = self.user_model(username=u, password='testing')
+            people.append(user)
 
         # make an admin user
-        self.admin = self.User(username='admin', password='testing', admin=True)
-        self.people.append(self.admin)
+        self.admin = self.user_model(username='admin', password='testing', admin=True)
+        people.append(self.admin)
 
-        self.db.session.add_all(self.people)
-        self.db.session.commit()
+        self.session.add_all(people)
+        self.session.commit()
+        return people

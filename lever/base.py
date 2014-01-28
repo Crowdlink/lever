@@ -115,17 +115,11 @@ class postprocess(preprocess):
         return f
 
 
-
-class ImposterMixin(object):
-    """ Allows a user with a specific permission key to perform an action as if
-    they were another user. Useful for system administrators and the like. """
-    pass
-
-
-class UserACLMixin(object):
+class ImpersonateMixin(object):
     """ Allows ACL lookups from a user object. Expects current_user attribute
     to be set to an application LocalProxy that yeilds the user object for the
     request. This is the most common ACL system used with Lever. """
+    from flask.ext.login import current_user
 
     @preprocess('post')
     def impersonate(self):
@@ -148,16 +142,13 @@ class UserACLMixin(object):
 
 
 class ModelBasedACL(object):
-    def can(self, action):
-        """ This function should parse the current parameters to gain parent
-        information for properly running can_cls on the model this API wraps
-        """
-        return self.obj.can(action)
+    """ Executes ACL methods on the model directly to determine ability to
+    execute requested action """
+    def can(self, obj, action):
+        return obj.can(action)
 
     def can_cls(self, action):
-        """ This function should parse the current parameters to gain parent
-        information for properly running can_cls on the model this API wraps
-        """
+        print action
         return self.model.can_cls(action)
 
 
@@ -274,8 +265,14 @@ class API(MethodView):
     def get_obj(self):
         pkey = self.params.pop(self.pkey_val, None)
         if pkey:  # if a int primary key is passed
-            return self.model.query.filter(self.pkey == pkey).one()
+            return self.session.query(self.model).filter(self.pkey == pkey).one()
         return False
+
+    def can(self, obj, action):
+        """ This function should parse the current parameters to gain parent
+        information for properly running can_cls on the model this API wraps
+        """
+        return True
 
     def can_cls(self, action):
         """ This function should parse the current parameters to gain parent
@@ -292,8 +289,8 @@ class API(MethodView):
         join = self.params.pop('join_prof', 'standard_join')
         obj = self.get_obj()
         if obj:  # if a int primary key is passed
-            assert obj.can('view_' + join), "Can't view that object with join " + join
-            return jsonify(success=True, objects=[get_joined(obj, join)])
+            assert self.can(obj, 'view_' + join), "Can't view that object with join " + join
+            retval = dict(success=True, objects=[get_joined(obj, join)])
         else:
             query = self.search()
             one = self.params.pop('__one', None)
@@ -302,8 +299,12 @@ class API(MethodView):
             else:
                 query = self.paginate(query=query)
             for obj in query:
-                assert obj.can('view_' + join), "Can't view that object with join " + join
-            return jsonify(success=True, objects=get_joined(query, join))
+                assert self.can(obj, 'view_' + join), "Can't view that object with join " + join
+            retval = dict(success=True, objects=get_joined(query, join))
+
+        for method in self._post_method.get('get', []):
+            method(self, retval)
+        return jsonify(**retval)
 
     def post(self):
         """ Create a new object """
@@ -328,7 +329,13 @@ class API(MethodView):
 
         retval = {}
         try:
-            ret = getattr(obj, action)(**self.params)
+            if action == '__init__':
+                obj = obj(**self.params)
+                self.session.add(obj)
+                self.session.flush()
+                ret = {'objects': [get_joined(obj)]}
+            else:
+                ret = getattr(obj, action)(**self.params)
         except TypeError as e:
             if 'argument' in str(e):
                 msg = ("Wrong number of arguments supplied for action {0}."
@@ -347,6 +354,8 @@ class API(MethodView):
 
         self.session.commit()
 
+        for method in self._post_method.get('post', []):
+            method(self, retval)
         try:
             return jsonify(**retval)
         except (LeverException, KeyError, AttributeError):
@@ -378,13 +387,16 @@ class API(MethodView):
         for key, val in six.iteritems(self.params):
             current_app.logger.debug(
                 "Updating value for '{0}' to '{1}'".format(key, val))
-            assert obj.can('edit_' + key), "Can't edit key {0} on type {1}"\
+            assert self.can(obj, 'edit_' + key), "Can't edit key {0} on type {1}"\
                 .format(key, self.model.__name__)
             setattr(obj, key, val)
 
         self.session.commit()
+        retval = {'success': True}
+        for method in self._post_method.get('put', []):
+            method(self, retval)
 
-        return jsonify(success=True)
+        return jsonify(**retval)
 
     def delete(self):
         self.params = request.get_json(silent=True)
@@ -396,17 +408,20 @@ class API(MethodView):
         obj = self.get_obj()
         if not obj:
             raise LeverNotFound("Could not find any object to delete")
-        assert obj.can('delete'), "Can't delete that object"
+        assert self.can(obj, 'delete'), "Can't delete that object"
         self.session.delete(obj)
         self.session.commit()
 
-        return jsonify(success=True)
+        retval = {'success': True}
+        for method in self._post_method.get('delete', []):
+            method(self, retval)
+        return jsonify(**retval)
 
     def paginate(self, query=None):
         """ Sets limit and offset values on a query object based on arguments,
         and limited by class settings """
         if not query:
-            query = self.model.query
+            query = self.session.query(self.model)
         pg_size = self.params.get('pg_size')
         # don't do any pagination if we don't have a max page size and no
         # pagination is requested
@@ -422,7 +437,7 @@ class API(MethodView):
         """ Handles arguments __filter_by, __filter, and __order_by by
         modifying the query parameters before execution """
         if query is None:
-            query = self.model.query
+            query = self.session.query(self.model)
 
         filters = self.params.pop('__filter', None)
         try:
