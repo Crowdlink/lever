@@ -127,7 +127,7 @@ class ImpersonateMixin(object):
         username = self.params.pop('__username', None)
         userid = self.params.pop('__user_id', None)
         if userid or username:
-            query = self.model.query
+            query = self.session.query(self.model)
             if userid:
                 query = query.filter_by(id=userid)
             if username:

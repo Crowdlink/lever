@@ -1,13 +1,13 @@
 import unittest
 import types
+import datetime
 
-from flask.ext.testing import TestCase
 from flask import Flask
 from pprint import pprint
 from sqlalchemy import (Column, create_engine, DateTime, Date, Float,
                         ForeignKey, Integer, Boolean, Unicode, create_engine)
 
-from lever import API, preprocess, postprocess
+from lever import API, preprocess, postprocess, ModelBasedACL, ImpersonateMixin
 from lever.tests.model_helpers import FlaskTestBase, TestUserACL
 
 
@@ -353,3 +353,39 @@ class TestLogin(TestUserACL):
         people = self.provision_users()
         p = {'id': people[2].id}
         self.delete('user', 403, params=p)
+
+    def test_impersonate(self):
+        """ can the admin properly impersonate someone for a create?"""
+        self.user_api()
+        class Widget(self.base):
+            __tablename__ = 'testing'
+            id = Column(Integer, primary_key=True)
+            name = Column(Unicode, unique=True)
+            owner = Column(Unicode)
+            created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+            acl = {'admin': set(['create_other'])}
+            standard_join = ['name', 'created_at', 'id', 'description']
+
+            @classmethod
+            def create(cls, name, user=None):
+                inst = cls(name=name)
+                if user:
+                    self.owner = user.username
+                self.session.add(inst)
+                return inst
+
+
+        class WidgetAPI(ImpersonateMixin, ModelBasedACL, API):
+            model = Widget
+            session = self.session
+            create_method = "create"
+
+
+        self.app.add_url_rule('/widget', view_func=WidgetAPI.as_view('widget'))
+        self.base.metadata.create_all(self.engine)
+        people = self.provision_users()
+        p = {'__action': 'login', 'id': self.admin.id, 'password': "testing"}
+        self.post('user', 200, params=p)
+        p = {'__user_id': people[2].id, 'name': 'testing'}
+        self.post('widget', 200, params=p)

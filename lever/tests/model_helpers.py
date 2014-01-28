@@ -5,7 +5,6 @@ import json
 
 from flask import Flask, jsonify
 from flask.ext.login import LoginManager, current_user, login_user
-from flask.ext.testing import TestCase
 from sqlalchemy import (Column, create_engine, DateTime, Date, Float,
                         ForeignKey, Integer, Boolean, Unicode, create_engine)
 from sqlalchemy.orm.scoping import scoped_session
@@ -123,7 +122,6 @@ class FlaskTestBase(unittest.TestCase):
         class WidgetAPI(API):
             model = Widget
             session = self.session
-            current_user = current_user
 
         self.app.add_url_rule('/widget', view_func=WidgetAPI.as_view('widget'))
 
@@ -239,7 +237,7 @@ class TestUserACL(FlaskTestBase):
             except sqlalchemy.orm.exc.NoResultFound:
                 return None
 
-        class UserAPI(ModelBasedACL, API):
+        class UserAPI(ModelBasedACL, ImpersonateMixin, API):
             model = User
             session = self.session
 
@@ -253,12 +251,12 @@ class TestUserACL(FlaskTestBase):
     def provision_users(self):
         """Creates the database, the Flask application, and the APIManager."""
         people = []
-        for u in ['mary', 'lucy', 'katy', 'john']:
-            user = self.user_model(username=u, password='testing')
+        for u in [u'mary', u'lucy', u'katy', u'john']:
+            user = self.user_model(username=u, password=u'testing')
             people.append(user)
 
         # make an admin user
-        self.admin = self.user_model(username='admin', password='testing', admin=True)
+        self.admin = self.user_model(username=u'admin', password=u'testing', admin=True)
         people.append(self.admin)
 
         self.session.add_all(people)
