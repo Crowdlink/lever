@@ -47,9 +47,14 @@ class FlaskTestBase(unittest.TestCase):
         # recommendations
         @self.app.errorhandler(LeverException)
         def handler(exc):
-            self.app.logger.debug("Extra: {0}\nEnd User: {1}"
-                                       .format(exc.extra, exc.end_user),
-                                       exc_info=True)
+            tb = exc.extra.pop('tb', None)
+            self.app.logger.debug("Lever Exception Thrown!\n"
+                                  "Extra: {0}\nEnd User: {1}"
+                                  .format(exc.extra, exc.end_user),
+                                    exc_info=True)
+            if tb:
+                self.app.logger.debug("Traceback from lever exception:"
+                                      "\n{0}".format(tb.replace('\\n', '\n')))
             return jsonify(**exc.end_user), exc.code
 
         return app
@@ -233,13 +238,14 @@ class TestUserACL(FlaskTestBase):
         @self.lm.user_loader
         def user_loader(id):
             try:
-                return User.query.filter_by(id=id).one()
+                return self.session.query(User).filter_by(id=id).one()
             except sqlalchemy.orm.exc.NoResultFound:
                 return None
 
         class UserAPI(ModelBasedACL, ImpersonateMixin, API):
             model = User
             session = self.session
+            user_model = User
 
         self.app.add_url_rule('/user', view_func=UserAPI.as_view('user'))
         self.user_model = User

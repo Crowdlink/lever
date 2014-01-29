@@ -7,6 +7,7 @@ import sqlalchemy
 import sys
 import calendar
 import datetime
+import traceback
 
 
 class LeverException(Exception):
@@ -120,25 +121,32 @@ class ImpersonateMixin(object):
     to be set to an application LocalProxy that yeilds the user object for the
     request. This is the most common ACL system used with Lever. """
     from flask.ext.login import current_user
+    user_model = None
 
     @preprocess('post')
     def impersonate(self):
+        if self.user_model is None:
+            raise Exception("user_model must be defined to lookup users")
         # check to ensure the user can create for others if requested
         username = self.params.pop('__username', None)
         userid = self.params.pop('__user_id', None)
         if userid or username:
-            query = self.session.query(self.model)
+            query = self.session.query(self.user_model)
             if userid:
                 query = query.filter_by(id=userid)
             if username:
                 query = query.filter_by(username=username)
-            self.params['user'] = query.one()
-            self.create_hook()
-            assert self.can_cls('class_create_other', params=self.params), "Cant create for other users"
+            user = query.one()
+            assert self.can_cls('class_create_other'), "Cant create for other users"
+            self.params['user'] = user
         else:
-            self.params['user'] = self.current_user.get()
-            self.create_hook()
             assert self.can_cls('class_create'), "Cant create that object"
+            self.params['user'] = self.current_user.get()
+
+    def can_cls(self, action):
+        # don't pass in impersonated user objects...
+        dct = dict((k, v) for k, v in self.params.items() if k != 'user')
+        return self.model.can_cls(action, **dct)
 
 
 class ModelBasedACL(object):
@@ -148,11 +156,29 @@ class ModelBasedACL(object):
         return obj.can(action)
 
     def can_cls(self, action):
-        print action
-        return self.model.can_cls(action)
+        return self.model.can_cls(action, **self.params)
 
 
-class API(MethodView):
+class APIMeta(MethodViewType):
+    def __init__(mcs, name, bases, dct):
+        MethodViewType.__init__(mcs, name, bases, dct)
+        types = ['_pre_method', '_post_method', '_pre_action', '_post_action']
+        for key in types:
+            setattr(mcs, key, {})
+        attrs = list(six.itervalues(dct))
+        for base in bases:
+            attrs.extend(list(six.itervalues(base.__dict__)))
+        for attr in attrs:
+            for key in types:
+                val = getattr(attr, key, None)
+                if val:
+                    if not isinstance(val, (list, tuple)):
+                        val = (val, )
+                    for method in val:
+                        getattr(mcs, key).setdefault(method, []).append(attr)
+
+
+class API(six.with_metaclass(APIMeta, MethodView)):
     """ The main method that underlies Lever. Create a new class that inherits
     from this and set the session to your database session, model to the model
     that you're wrapping and basic functionality should be good to go. """
@@ -165,24 +191,6 @@ class API(MethodView):
     params = {}
     session = None
     # The database session from SQLAlchemy
-
-    class __metaclass__(MethodViewType):
-        def __init__(mcs, name, bases, dct):
-            MethodViewType.__init__(mcs, name, bases, dct)
-            types = ['_pre_method', '_post_method', '_pre_action', '_post_action']
-            for key in types:
-                setattr(mcs, key, {})
-            attrs = dct.values()
-            for base in bases:
-                attrs.extend(base.__dict__.values())
-            for attr in attrs:
-                for key in types:
-                    val = getattr(attr, key, None)
-                    if val:
-                        if not isinstance(val, (list, tuple)):
-                            val = (val, )
-                        for method in val:
-                            getattr(mcs, key).setdefault(method, []).append(attr)
 
     @property
     def pkey(self):
@@ -209,6 +217,7 @@ class API(MethodView):
 
         extra = {'original_exc': str(info[1]),
                  'original_exc_type': str(info[0]),
+                 'tb': "".join(traceback.format_tb(info[2])),
                  'params': self.params}
         end_user = {'success': False}
         code = None
@@ -336,6 +345,8 @@ class API(MethodView):
                 ret = {'objects': [get_joined(obj)]}
             else:
                 ret = getattr(obj, action)(**self.params)
+                if isinstance(ret, self.model):
+                    ret = {'objects': [get_joined(ret)]}
         except TypeError as e:
             if 'argument' in str(e):
                 msg = ("Wrong number of arguments supplied for action {0}."
