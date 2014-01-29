@@ -23,7 +23,7 @@ class BaseMapper(object):
         return []
 
     @classmethod
-    def p_roles(self):
+    def p_roles(self, **parents):
         """ Determines roles to be gained from parent objects. Usually uses the
         _inherit_roles helper function to prefix all parent roles with their
         class name """

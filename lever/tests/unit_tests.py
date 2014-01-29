@@ -135,8 +135,7 @@ class TestProcessorUsage(FlaskTestBase):
                     raise SyntaxError  # pick an obscure one to catch..
 
             inst = APIAwesome()
-            with self.assertRaises(SyntaxError):
-                getattr(inst, meth)()
+            self.assertRaises(SyntaxError, getattr(inst, meth))
 
     def test_methods_postprocess(self):
         obj = self.provision_single_asset()
@@ -153,8 +152,7 @@ class TestProcessorUsage(FlaskTestBase):
             self.app.add_url_rule('/' + meth, view_func=APIAwesome.as_view(meth))
 
         for meth, vals in data:
-            with self.assertRaises(SyntaxError):
-                getattr(self, meth)(meth, 500, params=vals)
+            self.assertRaises(SyntaxError, getattr(self, meth), meth, 500, params=vals)
 
 
 class TestAPICreation(FlaskTestBase):
@@ -364,8 +362,8 @@ class TestLogin(TestUserACL):
             owner = Column(Unicode)
             created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
-            acl = {'admin': set(['create_other'])}
-            standard_join = ['name', 'created_at', 'id', 'description']
+            acl = {'admin': set(['class_create_other', 'action_create'])}
+            standard_join = ['name', 'created_at', 'id']
 
             @classmethod
             def create(cls, name, user=None):
@@ -380,6 +378,7 @@ class TestLogin(TestUserACL):
             model = Widget
             session = self.session
             create_method = "create"
+            user_model = self.user_model
 
 
         self.app.add_url_rule('/widget', view_func=WidgetAPI.as_view('widget'))
