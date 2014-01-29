@@ -5,6 +5,7 @@
 *.swm
 .idea
 node_modules
+cover
 
 # tmp saves
 *~

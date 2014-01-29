@@ -100,30 +100,35 @@ class preprocess(object):
     """ Simple decorator that sets special attributes on decorated methods.
     These attributes get picked up by our __new__ method and assign
     preprocessors for specific actions or methods """
-    def __init__(self, method=None, action=None):
+    def __init__(self, method=None, action=None, pri=500):
         self.action = action
         self.method = method
+        self.priority = pri
 
     def __call__(self, f):
         f._pre_action = self.action
         f._pre_method = self.method
+        f._priority = self.priority
         return f
 
 class postprocess(preprocess):
     def __call__(self, f):
         f._post_action = self.action
         f._post_method = self.method
+        f._priority = self.priority
         return f
 
 
 class ImpersonateMixin(object):
-    """ Allows ACL lookups from a user object. Expects current_user attribute
-    to be set to an application LocalProxy that yeilds the user object for the
-    request. This is the most common ACL system used with Lever. """
+    """ allows a sufficiently priveledged entity to perform actions as if they
+    are another user. Useful for administrators doing actions for their users
+    when need arises. Depends on the user_model attribute being set. Allows
+    lookup of user that you're acting on the behalf of via __username parameter
+    or __user_id parameter. """
     from flask.ext.login import current_user
     user_model = None
 
-    @preprocess('post')
+    @preprocess(method='post', pri=1000)
     def impersonate(self):
         if self.user_model is None:
             raise Exception("user_model must be defined to lookup users")
@@ -150,8 +155,7 @@ class ImpersonateMixin(object):
 
 
 class ModelBasedACL(object):
-    """ Executes ACL methods on the model directly to determine ability to
-    execute requested action """
+    """ Delegates ACL generation to models being directly tested """
     def can(self, obj, action):
         return obj.can(action)
 
@@ -163,19 +167,43 @@ class APIMeta(MethodViewType):
     def __init__(mcs, name, bases, dct):
         MethodViewType.__init__(mcs, name, bases, dct)
         types = ['_pre_method', '_post_method', '_pre_action', '_post_action']
+        # here to accumulate methods by priority, then this is sorted out
+        # to a list
+        type_funcs = {}
+        # set to an empty dictionary. dict is keyed on method, or action
         for key in types:
             setattr(mcs, key, {})
+            type_funcs[key] = {}
+
+        # accumulate all attributes on this class or bases
         attrs = list(six.itervalues(dct))
         for base in bases:
             attrs.extend(list(six.itervalues(base.__dict__)))
+
+        # loop through all the possible attrs and accumulate their attached
+        # methods
         for attr in attrs:
             for key in types:
+                # see if it has a special attribute designating it for use
                 val = getattr(attr, key, None)
                 if val:
+                    # turn single attribute into iterable
                     if not isinstance(val, (list, tuple)):
                         val = (val, )
+
+                    # build a dictionary keyed by priority
                     for method in val:
-                        getattr(mcs, key).setdefault(method, []).append(attr)
+                        (type_funcs[key].setdefault(method, {}).
+                                      setdefault(attr._priority, []).
+                                      append(attr))
+
+        # now run through our dictionary of lists of functions that is
+        # keyed by priority and combine them into one list. equal
+        # priorities are a taken first encountered order
+        for typ, methods in six.iteritems(type_funcs):
+            for method, pris in six.iteritems(methods):
+                for pri, funcs in sorted(six.iteritems(pris)):
+                    getattr(mcs, typ).setdefault(method, []).extend(funcs)
 
 
 class API(six.with_metaclass(APIMeta, MethodView)):
