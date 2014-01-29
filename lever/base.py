@@ -142,11 +142,8 @@ class ImpersonateMixin(object):
             if username:
                 query = query.filter_by(username=username)
             user = query.one()
-            assert self.can_cls('class_create_other'), "Cant create for other users"
+            assert self.can_cls('class_' + self.action + '_other'), "Cant create for other users"
             self.params['user'] = user
-        else:
-            assert self.can_cls('class_create'), "Cant create that object"
-            self.params['user'] = self.current_user.get()
 
     def can_cls(self, action):
         # don't pass in impersonated user objects...
@@ -346,39 +343,39 @@ class API(six.with_metaclass(APIMeta, MethodView)):
     def post(self):
         """ Create a new object """
         self.params = request.get_json(silent=True) or {}
+        self.action = self.params.pop('__action', None)
+        cls = self.params.pop('__cls', None)
+        if not self.action:
+            cls = True
+            self.action = self.create_method
         for method in self._pre_method.get('post', []):
             method(self)
-        action = self.params.pop('__action', None)
-        cls = self.params.pop('__cls', None)
-        if not action:
-            cls = True
-            action = self.create_method
 
         if not cls:
             obj = self.get_obj()
             if not obj:
                 raise LeverNotFound(
                     "Could not find any object to perform an action on")
-            assert self.can(obj, 'action_' + action), "Cant perform action " + action
+            assert self.can(obj, 'action_' + self.action), "Cant perform action " + self.action
         else:
-            assert self.can_cls('action_' + action), "Can't perform cls action " + action
+            assert self.can_cls('action_' + self.action), "Can't perform cls action " + self.action
             obj = self.model
 
         retval = {}
         try:
-            if action == '__init__':
+            if self.action == '__init__':
                 obj = obj(**self.params)
                 self.session.add(obj)
                 self.session.flush()
                 ret = {'objects': [get_joined(obj)]}
             else:
-                ret = getattr(obj, action)(**self.params)
+                ret = getattr(obj, self.action)(**self.params)
                 if isinstance(ret, self.model):
                     ret = {'objects': [get_joined(ret)]}
         except TypeError as e:
             if 'argument' in str(e):
                 msg = ("Wrong number of arguments supplied for action {0}."
-                       .format(action))
+                       .format(self.action))
                 six.reraise(LeverSyntaxError, msg, tb=sys.exc_info()[2])
             else:
                 raise
@@ -405,7 +402,7 @@ class API(six.with_metaclass(APIMeta, MethodView)):
                     "Response was not JSON serializable, patch method returned"
                     " invalid data.",
                     extra={'retval': str(retval)},
-                    end_user={'method': action})
+                    end_user={'method': self.action})
 
     def create_hook(self):
         """ Does logic required for checking permissions on a create action """
