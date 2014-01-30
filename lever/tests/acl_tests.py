@@ -32,6 +32,24 @@ class TestACLContrstruction(unittest.TestCase):
         assert 'testing' not in acl
         assert 'key_exists' in acl['testing2']['admin']
 
+    def test_inherit_virtual_inherit(self):
+        struct = yaml.load("""
+        testing:
+            other:
+                key2: exists
+            user:
+                key: exists
+                inherit: other
+        testing2:
+            inherit: testing
+            other:
+                key3: exists
+            admin:
+                inherit: user""")
+        acl = build_acl(struct)
+        assert 'key3_exists' in acl['testing2']['admin']
+        assert 'key2_exists' in acl['testing2']['admin']
+
     def test_basic_key(self):
         struct = yaml.load("""
         testing:
@@ -58,6 +76,20 @@ class TestACLContrstruction(unittest.TestCase):
                 key:
                     - exists""")
         acl = build_acl(struct)
+        assert 'key_exists' in acl['testing']['admin']
+
+    def test_basic_inherit_inherit_role(self):
+        struct = yaml.load("""
+        testing:
+            admin:
+                inherit: someone
+            someone:
+                inherit: user
+            user:
+                key:
+                    - exists""")
+        acl = build_acl(struct)
+        print(acl)
         assert 'key_exists' in acl['testing']['admin']
 
     def test_basic_inherit_list_role(self):

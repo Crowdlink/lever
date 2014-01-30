@@ -117,18 +117,6 @@ class ProcessTests(unittest.TestCase):
 
     def test_preprocess_priority(self):
         class APIAwesome(API):
-            @postprocess(method='post')
-            def preprocess_those(self):
-                pass
-
-            @postprocess(method='post')
-            def preprocess_that(self):
-                pass
-
-        self.assertEqual(
-            APIAwesome._post_method['post'][0].__name__, 'preprocess_that')
-
-        class APIAwesome(API):
             @postprocess(method='post', pri=0)
             def preprocess_those(self):
                 pass
