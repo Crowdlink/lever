@@ -140,9 +140,12 @@ def build_acl(structure):
                                         # extend a list of inherits
                                         val.extend(other_inh['inherit'])
 
-            else:
+            elif not isinstance(keys, list):
                 if role not in ('virtual', 'inherit'):
-                    raise Exception("Contents of role must be dictionary")
+                    raise Exception(
+                        "Contents of role must be dictionary, instead got {0}"
+                        " of value {1} for role {2} in type {3}"
+                        .format(type(keys), keys, role, typ))
         compiled.append(typ)
 
     compiled = []

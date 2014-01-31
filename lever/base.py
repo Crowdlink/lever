@@ -125,11 +125,11 @@ class ImpersonateMixin(object):
     when need arises. Depends on the user_model attribute being set. Allows
     lookup of user that you're acting on the behalf of via __username parameter
     or __user_id parameter. """
-    from flask.ext.login import current_user
     user_model = None
 
     @preprocess(method='post', pri=1000)
     def impersonate(self):
+        from flask.ext.login import current_user
         if self.user_model is None:
             raise Exception("user_model must be defined to lookup users")
         # check to ensure the user can create for others if requested
