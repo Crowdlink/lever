@@ -341,7 +341,7 @@ class API(six.with_metaclass(APIMeta, MethodView)):
         return jsonify(**retval)
 
     def post(self):
-        """ Create a new object """
+        """ Perform an action on an object or class """
         self.params = request.get_json(silent=True) or {}
         self.action = self.params.pop('__action', None)
         cls = self.params.pop('__cls', None)
@@ -371,6 +371,7 @@ class API(six.with_metaclass(APIMeta, MethodView)):
             else:
                 ret = getattr(obj, self.action)(**self.params)
                 if isinstance(ret, self.model):
+                    self.session.flush()
                     ret = {'objects': [get_joined(ret)]}
         except TypeError as e:
             if 'argument' in str(e):
