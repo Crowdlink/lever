@@ -350,6 +350,8 @@ class API(six.with_metaclass(APIMeta, MethodView)):
             self.action = self.create_method
         for method in self._pre_method.get('post', []):
             method(self)
+        for method in self._pre_method.get(self.action, []):
+            method(self)
 
         if not cls:
             obj = self.get_obj()
@@ -367,12 +369,8 @@ class API(six.with_metaclass(APIMeta, MethodView)):
                 obj = obj(**self.params)
                 self.session.add(obj)
                 self.session.flush()
-                ret = {'objects': [get_joined(obj)]}
             else:
                 ret = getattr(obj, self.action)(**self.params)
-                if isinstance(ret, self.model):
-                    self.session.flush()
-                    ret = {'objects': [get_joined(ret)]}
         except TypeError as e:
             if 'argument' in str(e):
                 msg = ("Wrong number of arguments supplied for action {0}."
@@ -381,18 +379,24 @@ class API(six.with_metaclass(APIMeta, MethodView)):
             else:
                 raise
 
+        for method in self._post_action.get(self.action, []):
+            ret = method(self, ret)
+        for method in self._post_method.get('post', []):
+            ret = method(self, ret)
+
         if ret is None or ret is True:
             retval['success'] = True
         elif ret is False:
             retval['success'] = False
         else:
+            if hasattr(ret, '__table__'):
+                self.session.flush()
+                ret = {'objects': [get_joined(ret)]}
             retval['success'] = True
             retval.update(ret)
 
         self.session.commit()
 
-        for method in self._post_method.get('post', []):
-            method(self, retval)
         try:
             return jsonify(**retval)
         except (LeverException, KeyError, AttributeError):
@@ -632,7 +636,12 @@ def jsonize(obj, args, raw=False):
     representation.  For passing back object state via the api """
     dct = {}
     for key in args:
-        attr = getattr(obj, key)
+        try:
+            attr = getattr(obj, key)
+        except Exception:
+            raise LeverServerError(
+                "Invalid join property {0} defined by join profile"
+                .format(key))
         # if it's a callable function call it, then do the parsing below
         if callable(attr):
             try:
