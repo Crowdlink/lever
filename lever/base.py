@@ -51,6 +51,11 @@ class LeverSyntaxError(LeverException):
     code = 400
 
 
+class LeverAccessDenied(LeverException):
+    code = 404
+    pass
+
+
 class LeverNotFound(LeverException):
     code = 404
     pass
@@ -255,7 +260,7 @@ class API(six.with_metaclass(APIMeta, MethodView)):
             msg = 'Incorrect syntax or missing key ' + str(e)
             code = 400
             extra = {'key': str(e)}
-        except AttributeError:
+        except (AttributeError, ValueError):
             msg = 'Incorrect syntax or missing key'
             code = 400
         except AssertionError:
@@ -471,7 +476,8 @@ class API(six.with_metaclass(APIMeta, MethodView)):
         elif pg_size is None:  # default to max_pg_size
             pg_size = self.max_pg_size
         pg_size = min(pg_size, self.max_pg_size)  # limit their option to max
-        page = self.params.get('pg', 1)
+        page = int(self.params.get('pg', 1))
+        print (page - 1) * pg_size
         return query.offset((page - 1) * pg_size).limit(pg_size)
 
     def search(self, query=None):
