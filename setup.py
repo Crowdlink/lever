@@ -7,7 +7,7 @@ requires = ['flask',
             'sqlalchemy']
 
 setup(name='lever',
-      version='0.2.2',
+      version='0.2.3',
       description='A tool for exposing SQLAlchemy models in Flask via REST',
       author='Isaac Cook',
       author_email='isaac@crowdlink.io',
