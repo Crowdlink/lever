@@ -475,9 +475,13 @@ class API(six.with_metaclass(APIMeta, MethodView)):
             return query
         elif pg_size is None:  # default to max_pg_size
             pg_size = self.max_pg_size
-        pg_size = min(pg_size, self.max_pg_size)  # limit their option to max
+
+        try:
+            pg_size = min([int(pg_size), self.max_pg_size])  # limit their option to max
+        except ValueError:
+            pg_size = self.max_pg_size
+
         page = int(self.params.get('pg', 1))
-        print (page - 1) * pg_size
         return query.offset((page - 1) * pg_size).limit(pg_size)
 
     def search(self, query=None):
