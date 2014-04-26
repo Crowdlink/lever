@@ -371,7 +371,7 @@ class API(six.with_metaclass(APIMeta, MethodView)):
         retval = {}
         try:
             if self.action == '__init__':
-                obj = obj(**self.params)
+                ret = obj(**self.params)
                 self.session.add(obj)
                 self.session.flush()
             else:
@@ -393,12 +393,15 @@ class API(six.with_metaclass(APIMeta, MethodView)):
             retval['success'] = True
         elif ret is False:
             retval['success'] = False
-        else:
-            if hasattr(ret, '__table__'):
-                self.session.flush()
-                ret = {'objects': [get_joined(ret)]}
-            retval['success'] = True
+        elif hasattr(ret, '__table__'):
+            self.session.flush()
+            ret = {'objects': [get_joined(ret)]}
             retval.update(ret)
+            retval['success'] = True
+        elif isinstance(ret, dict):
+            retval.update(ret)
+        else:
+            retval['success'] = False
 
         self.session.commit()
 
@@ -663,7 +666,7 @@ def jsonize(obj, args, raw=False):
                 continue
         # convert datetime to seconds since epoch, much more universal
         if isinstance(attr, datetime.datetime):
-            attr = calendar.timegm(attr.utctimetuple()) * 1000
+            attr = calendar.timegm(attr.utctimetuple())
         # don't convert these common types to strings
         elif (isinstance(attr, bool) or
               isinstance(attr, int) or
