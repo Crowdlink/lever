@@ -670,6 +670,7 @@ def jsonize(obj, args, raw=False):
         # don't convert these common types to strings
         elif (isinstance(attr, bool) or
               isinstance(attr, int) or
+              isinstance(attr, float) or
               isinstance(attr, dict) or
               attr is None or
               isinstance(attr, list)):
